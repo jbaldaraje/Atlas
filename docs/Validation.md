@@ -24,3 +24,9 @@ Before real personal-data use, complete signed sandbox tests, VoiceOver/keyboard
 This cloud instance supports source editing and static inspection. A macOS/Xcode host remains an external blocker for required native validation. Saving startup guidance does not publish configuration, execute CI, or prove restoration in a new task.
 
 Spatial redesign: six additional domain tests cover camera inverse transforms, centering, fitting, zoom bounds, stable collision-free layout extension, and backward decoding of workspace metadata without optional presentation/history fields. They remain unrun. The updated project references/build phase include all new native views. See Design.md for the still-pending visual and interaction acceptance checks.
+
+## VaultCore module build configuration correction
+
+A local macOS build reported `Unable to find module dependency: VaultCore`. The app/test dependency has been changed from local Swift-package product resolution to an explicit native static-framework target named VaultCore. It compiles the same three core source files, defines the module, and is linked by both consumers through explicit target dependencies. The standalone package remains unchanged for `swift test`.
+
+Project inspection passed: all references resolve, all three core sources belong to the target, both Debug/Release configurations define a static module, and both consumers depend on and link the resulting framework. This verifies project structure, not a native build; macOS/Xcode are still unavailable here. Access to GitHub Actions logs through the GitHub API was denied, so no CI outcome is asserted.

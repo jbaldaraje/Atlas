@@ -17,6 +17,22 @@ swift test
 
 The package contains **14 tests**; the Xcode integration target contains **9 tests**. They have been written but **not executed** here. This Linux machine has neither Swift nor the macOS SDK. [macOS CI](.github/workflows/macos.yml) is provided but has not run. Unsigned CLI builds cannot validate signed sandbox behavior.
 
+## If Xcode reports “Unable to find module dependency: VaultCore”
+
+The Xcode project now builds `VaultCore` as an explicit native static framework target and links it into both Vault and VaultTests. Its source files are shared with the standalone package under `Packages/VaultCore`; no package needs to be added manually or downloaded for the app build.
+
+Close Xcode, update the checkout with `git pull --ff-only`, then reopen `Vault.xcodeproj`. Select **Vault / My Mac**, choose **Product → Clean Build Folder** (⇧⌘K), and build again (⌘B). Keep any local signing changes; do not reset or discard them to update. If Git reports conflicting local changes, resolve those before continuing.
+
+For a build independent of Xcode’s existing derived data, run from the repository root:
+
+```sh
+xcodebuild -project Vault.xcodeproj -scheme Vault \
+  -destination 'platform=macOS' -derivedDataPath /tmp/VaultModuleCheck \
+  build CODE_SIGNING_ALLOWED=NO
+```
+
+That unsigned command checks compilation; use the signed Xcode Run workflow for normal app execution. If it fails, inspect the first error in the VaultCore build rather than only later import errors.
+
 ## Use the workspaces
 
 - **Overview / All Files:** Add Files (⌘I), review scope, index originals or create verified copies. Browse grid/list, search filename/description/tags and opt-in extracted text, sort/filter, favorite, create collections, and edit metadata in the inspector. Drop files onto regular library workspaces to review import. ⌘-click files and use Organize for batch tags, collection membership, favorites, or confirmed index removal.
