@@ -15,7 +15,7 @@ cd Packages/VaultCore
 swift test
 ```
 
-The package contains **24 tests**; the Xcode integration target contains **23 tests**. They have been written but **not executed** here. This Linux machine has neither Swift nor the macOS SDK. [macOS CI](.github/workflows/macos.yml) is provided but has not run. Unsigned CLI builds cannot validate signed sandbox behavior.
+The package contains **24 tests**; the Xcode integration target contains **28 tests**. They have been written but **not executed** here. This Linux machine has neither Swift nor the macOS SDK. [macOS CI](.github/workflows/macos.yml) is provided but has not run. Unsigned CLI builds cannot validate signed sandbox behavior.
 
 ## If Xcode reports “Unable to find module dependency: VaultCore”
 
@@ -60,3 +60,7 @@ Use disposable fixtures only. Validate import/copy cancellation, conflict preser
 See [spatial design and interaction checklist](docs/Design.md), [specification](docs/Specification.md), [phase roadmap](docs/Roadmap.md), [implementation status](docs/Status.md), and [validation record](docs/Validation.md).
 
 The Overview now shows real recently added/opened files and a compact network entry rather than statistic cards. The native context inspector starts collapsed; select an item to reveal it or use Option–Command–I. The Inspector Preview action opens native Quick Look where supported.
+
+## Sidebar mascot and glass appearance
+
+The left panel includes a native 3D mascot and live local activity status for scans, import, folder checks, authentication, secure locking, and errors. Panels and buttons use glass materials with restrained cinematic lighting. In Settings, use **Cinematic animations** and **Show 3D sidebar mascot** to control motion and space. macOS Reduce Motion/Reduce Transparency are respected, and continuous mascot rendering pauses in inactive windows. See [mascot, glass, privacy, and validation details](docs/MascotGlass.md).

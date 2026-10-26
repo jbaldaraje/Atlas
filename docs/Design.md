@@ -1,3 +1,5 @@
+> The later requested mascot/glass update is documented in [MascotGlass.md](MascotGlass.md). It adds optional native 3D sidebar motion, live activity, glass surfaces, and slow background lighting while preserving this workspace structure.
+
 # Vault · spatial workspace design
 
 Implemented from the uploaded cinematic workspace brief. The uploaded text ends mid-sentence in the Storage section; no missing requirements are inferred. This is native SwiftUI source, not a rendered application screenshot or a verified macOS build.

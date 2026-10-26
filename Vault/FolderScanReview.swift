@@ -41,7 +41,7 @@ struct FolderScanReview: View {
                 Button("Change Folders…") { workspace.approveFolder() }
                 Spacer()
                 Button("Start Scan") { workspace.startFolderScan(library: store) }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(CinematicButtonStyle(prominent: true))
                     .disabled(workspace.scanCategories.isEmpty || workspace.pendingLocations.isEmpty || workspace.working || store.busy)
             }
         }

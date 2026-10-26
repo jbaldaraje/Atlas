@@ -16,6 +16,7 @@ final class LibraryStore: ObservableObject {
     private var importTask: Task<Void, Never>?
     @Published var message: String?
     @Published var loadFailed = false
+    @Published private(set) var operationFailed = false
     private let repository: LibraryRepository
     let managedDirectory: URL
 
@@ -27,8 +28,8 @@ final class LibraryStore: ObservableObject {
     }
     @discardableResult private func commit(_ next: Library) -> Bool {
         guard !loadFailed else { return false }
-        do { try repository.save(next); library = next; return true }
-        catch { message = "Metadata could not be saved. Your previous library remains unchanged."; return false }
+        do { try repository.save(next); library = next; operationFailed = false; return true }
+        catch { operationFailed = true; message = "Metadata could not be saved. Your previous library remains unchanged."; return false }
     }
     @discardableResult func update(_ file: FileItem) -> Bool {
         var next = library
@@ -56,7 +57,7 @@ final class LibraryStore: ObservableObject {
         Task {
             defer { busy = false }
             do { candidates = try await FileAccessService.inspect(urls); presentingImport = true }
-            catch { message = error.localizedDescription }
+            catch { operationFailed = true; message = error.localizedDescription }
         }
     }
     func bulk(ids: Set<UUID>, tags: [String] = [], collection: UUID? = nil, favorite: Bool = false, remove: Bool = false) {
@@ -84,6 +85,7 @@ final class LibraryStore: ObservableObject {
                 message = "Metadata could not be saved. Original files are preserved. Any verified managed copies remain at \(managedDirectory.path); inspect this directory before retrying a copy import."
                 return
             }
+            operationFailed = !report.failures.isEmpty
             message = (report.cancelled ? "Import cancelled; completed items were retained. " : "") + "Added \(report.items.count) files. Skipped \(report.skipped) existing references. Failed: \(report.failures.count)." + (report.failures.isEmpty ? "" : " Retry by selecting these files again: " + report.failures.joined(separator: ", "))
         }
     }
@@ -129,14 +131,14 @@ final class LibraryStore: ObservableObject {
                         }
                     }
                 }
-                if opened { openedEvent = OpenedFileEvent(id: file.id, date: .now) }
-                else { message = "The file could not be opened in its default application." }
-            } catch { message = error.localizedDescription }
+                if opened { operationFailed = false; openedEvent = OpenedFileEvent(id: file.id, date: .now) }
+                else { operationFailed = true; message = "The file could not be opened in its default application." }
+            } catch { operationFailed = true; message = error.localizedDescription }
         }
     }
     func reveal(_ file: FileItem) {
         do { try FileAccessService.withAccess(file) { NSWorkspace.shared.activateFileViewerSelecting([$0]) } }
-        catch { message = error.localizedDescription }
+        catch { operationFailed = true; message = error.localizedDescription }
     }
 }
 

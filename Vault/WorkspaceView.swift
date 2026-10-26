@@ -26,6 +26,8 @@ struct WorkspaceView: View {
     @EnvironmentObject private var store: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
     @EnvironmentObject private var trash: NativeTrashService
+    @Environment(\.accessibilityReduceMotion) private var reducedMotion
+    @AppStorage("cinematicMotion") private var cinematicMotion = true
     @State private var section: Section? = .overview
     @State private var columns: NavigationSplitViewVisibility = .all
     @State private var showInspector = false
@@ -86,6 +88,7 @@ struct WorkspaceView: View {
         }
         .background { ObservatoryBackground(grid: false) }
         .navigationTitle("Vault — \(currentSection.rawValue)")
+        .animation(reducedMotion || !cinematicMotion ? nil : .easeOut(duration: 0.22), value: section)
     }
 
     private var currentSection: Section { section ?? .overview }
@@ -263,7 +266,8 @@ struct WorkspaceView: View {
             HStack(spacing: 10) {
                 Image(systemName: "square.stack.3d.up").font(.system(size: 20, weight: .light)).foregroundStyle(accent)
                 Text("Vault").font(.system(size: 18, weight: .medium, design: .rounded))
-            }.padding(.horizontal, 20).padding(.top, 22).padding(.bottom, 28)
+            }.padding(.horizontal, 20).padding(.top, 18).padding(.bottom, 12)
+            VaultMascotPanel(secureSection: currentSection == .secure).padding(.horizontal, 14).padding(.bottom, 12)
             List(selection: $section) {
                 SwiftUI.Section("WORKSPACE") {
                     ForEach(Section.allCases) { item in
@@ -284,7 +288,7 @@ struct WorkspaceView: View {
                 Divider().opacity(0.5)
                 Label("Local by design", systemImage: "checkmark.shield").font(.system(size: 10)).foregroundStyle(.secondary)
             }.padding(20)
-        }.navigationSplitViewColumnWidth(min: 195, ideal: 210, max: 260)
+        }.background { ObservatoryBackground(grid: false) }.navigationSplitViewColumnWidth(min: 195, ideal: 210, max: 260)
     }
     private var header: some View {
         HStack(spacing: 12) {
@@ -394,7 +398,7 @@ struct WorkspaceView: View {
                 Spacer(minLength: 0)
                 if file.favorite { Image(systemName: "star.fill").font(.caption).foregroundStyle(.orange) }
             }
-        }.padding(12).background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
+        }.padding(12).quietPanel()
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(selectedIDs.contains(file.id) ? accent : Color.primary.opacity(0.09), lineWidth: selectedIDs.contains(file.id) ? 2 : 1))
             .contentShape(Rectangle())
     }

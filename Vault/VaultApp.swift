@@ -11,6 +11,7 @@ struct VaultApp: App {
         WindowGroup {
             WorkspaceView().environmentObject(store).environmentObject(workspace).environmentObject(secure).environmentObject(trash)
                 .frame(minWidth: 1000, minHeight: 680)
+                .buttonStyle(CinematicButtonStyle())
                 .preferredColorScheme(appearance == "system" ? nil : appearance == "dark" ? .dark : .light)
         }
         .defaultSize(width: 1400, height: 900)
@@ -19,6 +20,6 @@ struct VaultApp: App {
                 Button("Add Files…") { store.chooseFiles() }.keyboardShortcut("i", modifiers: [.command]).disabled(store.busy || store.loadFailed || workspace.working)
             }
         }
-        Settings { PreferencesView().padding(28).frame(width: 440).preferredColorScheme(appearance == "system" ? nil : appearance == "dark" ? .dark : .light) }
+        Settings { PreferencesView().padding(28).frame(width: 440).buttonStyle(CinematicButtonStyle()).preferredColorScheme(appearance == "system" ? nil : appearance == "dark" ? .dark : .light) }
     }
 }

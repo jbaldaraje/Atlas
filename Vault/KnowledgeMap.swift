@@ -22,6 +22,7 @@ struct KnowledgeMap: View {
     @EnvironmentObject private var store: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
     @Environment(\.accessibilityReduceMotion) private var reducedMotion
+    @AppStorage("cinematicMotion") private var cinematicMotion = true
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.scenePhase) private var scenePhase
     @Binding var selectedID: UUID?
@@ -116,10 +117,11 @@ struct KnowledgeMap: View {
         .onChange(of: selectedID) { _, _ in
             pulseTask?.cancel()
             guard selectedNodeID != nil else { pulse = false; focusMode = false; return }
-            pulseStarted = .now; pulse = !reducedMotion
+            pulseStarted = .now; pulse = !reducedMotion && cinematicMotion
             pulseTask = Task { try? await Task.sleep(for: .seconds(1.8)); if !Task.isCancelled { pulse = false } }
             if focusMode { fit() }
         }
+        .onChange(of: cinematicMotion) { _, enabled in if !enabled { pulseTask?.cancel(); pulse = false } }
         .onDisappear { pulseTask?.cancel() }
         .sheet(isPresented: $linking) { relationshipEditor }
     }
@@ -164,7 +166,7 @@ struct KnowledgeMap: View {
                     if panStart == nil { panStart = camera.pan }
                     camera.pan = SpatialPoint(x: (panStart?.x ?? 0) + value.translation.width, y: (panStart?.y ?? 0) + value.translation.height)
                 }.onEnded { _ in panStart = nil })
-                TimelineView(.animation(minimumInterval: 1.0 / 24, paused: !pulse || reducedMotion || scenePhase != .active)) { timeline in
+                TimelineView(.animation(minimumInterval: 1.0 / 24, paused: !pulse || reducedMotion || !cinematicMotion || scenePhase != .active)) { timeline in
                     Canvas { context, _ in
                         let visibleIDs = Set(visible.map(\.id))
                         for edge in edges where visibleIDs.contains(edge.source) && visibleIDs.contains(edge.target) {
@@ -294,6 +296,7 @@ struct KnowledgeMap: View {
 private struct SpatialNodeView: View {
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceMotion) private var reducedMotion
+    @AppStorage("cinematicMotion") private var cinematicMotion = true
     let title: String
     let subtitle: String
     let symbol: String
@@ -317,8 +320,8 @@ private struct SpatialNodeView: View {
                 Text(subtitle).font(.system(size: 8, weight: .medium)).tracking(1.2).foregroundStyle(.secondary)
             }
         }.frame(width: 166, height: compact ? 76 : 116).opacity(quiet && contrast != .increased ? 0.63 : 1)
-            .scaleEffect(hovered ? 1.035 : 1)
-            .animation(reducedMotion ? nil : .easeOut(duration: 0.16), value: hovered)
+            .scaleEffect(hovered && !reducedMotion && cinematicMotion ? 1.035 : 1)
+            .animation(reducedMotion || !cinematicMotion ? nil : .easeOut(duration: 0.16), value: hovered)
             .help("\(title) · \(subtitle)")
     }
 }

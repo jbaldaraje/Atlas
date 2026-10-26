@@ -22,7 +22,7 @@ struct OverviewWorkspace: View {
                 }.padding(.top, 10)
                 HStack {
                     Button(action: workspace.approveFolder) { Label("Scan Folders", systemImage: "folder.badge.plus") }
-                        .buttonStyle(.borderedProminent).disabled(workspace.working || store.busy)
+                        .buttonStyle(CinematicButtonStyle(prominent: true)).disabled(workspace.working || store.busy)
                     if let scan = workspace.data.lastScan {
                         Button("Last Scan · \(scan.addedIDs.count) added") { workspace.showScanResults() }.font(.caption)
                     }

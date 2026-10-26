@@ -9,6 +9,8 @@ final class WorkspaceStore: ObservableObject {
     @Published var recoveryEntries: [RecoveryEntry] = []
     private let recovery = RecoveryService()
     @Published var working = false
+    @Published private(set) var monitoringActive = false
+    @Published private(set) var processingLabel: String?
     @Published var report: StorageReport?
     @Published var pendingLocations: [ScanLocation] = []
     @Published var reviewFolder = false
@@ -49,18 +51,18 @@ final class WorkspaceStore: ObservableObject {
         } catch { self.error = "Workspace changes could not be saved."; return false }
     }
     func analyze(_ files: [FileItem]) {
-        guard !working else { return }; working = true
+        guard !working else { return }; working = true; processingLabel = "Analyzing storage"
         task = Task {
-            defer { working = false }
+            defer { working = false; processingLabel = nil }
             do { report = try await analyzer.analyze(files, hash: true) }
             catch is CancellationError {} catch { self.error = "Analysis failed." }
         }
     }
     func cancel() { task?.cancel() }
     func extract(_ file: FileItem) {
-        guard !working else { return }; working = true
+        guard !working else { return }; working = true; processingLabel = "Extracting document text"
         task = Task {
-            defer { working = false }
+            defer { working = false; processingLabel = nil }
             do { let text = try await extractor.extract(file, ocr: true); try Task.checkCancellation(); change { $0.extractedText[file.id] = text } }
             catch is CancellationError {} catch { self.error = error.localizedDescription }
         }
@@ -101,13 +103,14 @@ final class WorkspaceStore: ObservableObject {
                 try? await Task.sleep(for: .seconds(30))
                 guard let self, let library, !Task.isCancelled else { return }
                 if library.busy || self.working { continue }
-                self.working = true
+                guard self.data.locations.contains(where: { !$0.paused }) else { continue }
+                self.working = true; self.monitoringActive = true
                 for location in self.data.locations where !location.paused {
                     do {
                         try await self.refreshMonitoredFolder(location, library: library)
                     } catch { self.error = "Monitoring \(location.name) failed. Pause, reconnect, or approve the folder again." }
                 }
-                self.working = false
+                self.working = false; self.monitoringActive = false
             }
         }
     }
@@ -156,17 +159,17 @@ final class WorkspaceStore: ObservableObject {
         Task { do { recoveryEntries = try await recovery.list() } catch { self.error = "Recovery records could not be read. Files were preserved." } }
     }
     func retain(_ file: FileItem, library: LibraryStore) {
-        guard !working else { return }; working = true
+        guard !working else { return }; working = true; processingLabel = "Retaining a managed copy"
         Task {
-            defer { working = false }
+            defer { working = false; processingLabel = nil }
             do { try await recovery.retain(file); library.removeFromIndex(file.id); report = nil; refreshRecovery() }
             catch { self.error = error.localizedDescription }
         }
     }
     func restore(_ entry: RecoveryEntry, library: LibraryStore) {
-        guard !working else { return }; working = true
+        guard !working else { return }; working = true; processingLabel = "Restoring a file"
         Task {
-            defer { working = false }
+            defer { working = false; processingLabel = nil }
             do {
                 let file = try await recovery.restore(entry)
                 if library.addRestored(file) { try await recovery.finish(entry); refreshRecovery() }
@@ -175,8 +178,8 @@ final class WorkspaceStore: ObservableObject {
         }
     }
     func permanentlyDelete(_ entry: RecoveryEntry) {
-        guard !working else { return }; working = true
-        Task { defer { working = false }; do { try await recovery.finish(entry); refreshRecovery() } catch { self.error = error.localizedDescription } }
+        guard !working else { return }; working = true; processingLabel = "Deleting a retained copy"
+        Task { defer { working = false; processingLabel = nil }; do { try await recovery.finish(entry); refreshRecovery() } catch { self.error = error.localizedDescription } }
     }
 
 }

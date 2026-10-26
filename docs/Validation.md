@@ -6,14 +6,14 @@ Linux, with no Swift compiler, Xcode, or macOS SDK. **No Swift compilation, XCTe
 
 Static checks passed after the expanded implementation:
 
-- Swift grammar parsing of all **34 Swift files**, using tree-sitter-swift. This does not perform type checking or validate native framework APIs.
+- Swift grammar parsing of all **36 Swift files**, using tree-sitter-swift. This does not perform type checking or validate native framework APIs.
 - OpenStep parsing of `project.pbxproj` and resolution of declared object, product, package, configuration, and build-phase references.
-- Exact membership of all **25 application/integration Swift sources** in project references, including new services and tests.
+- Exact membership of all **27 application/integration Swift sources** in project references, including new services and tests.
 - Shared Xcode scheme XML and entitlement plist parsing.
 - App Sandbox, user-selected read/write capability, and app-scoped bookmark configuration; no network client entitlement. Original index bookmarks explicitly request read-only access.
 - `git diff --check` returned success. All source deliverables are untracked new files in the initially empty, unborn repository, so this is not a tracked-diff review.
 
-Validation parsers were installed from PyPI into `/tmp` and are not app dependencies. The repository's own automated tests are **24 domain/package test methods and 23 macOS integration test methods**; all are currently **unrun**. Syntax parser checks are not substitutes for them.
+Validation parsers were installed from PyPI into `/tmp` and are not app dependencies. The repository's own automated tests are **24 domain/package test methods and 28 macOS integration test methods**; all are currently **unrun**. Syntax parser checks are not substitutes for them.
 
 ## Required next validation
 
@@ -60,3 +60,7 @@ See SmartScanning.md for integration, file inventory, limits, and macOS acceptan
 Removed the 10,000-file guard and its error, as requested after a real local scan hit it. Replaced production whole-source discovery with a bounded actor cursor used by both manual scanning and polling. Each chunk is indexed and organized before requesting the next; progress/checkpoints accumulate and scopes close on success, cancellation, or errors. UI and current scanning documentation no longer advertise a source-file quota.
 
 Added native regression sources for 10,003-file discovery with bounded chunks; idempotent cursor closing that preserves originals; and a full multi-chunk scan with a persisted catalog containing every file. The repository now contains 47 test methods (24 package, 23 native), all unrun here. Static syntax, project-reference, and whitespace checks pass. Swift/Xcode remain unavailable on Linux, so the removal and batching behavior still need native compilation/execution. Existing JSON persistence remains an independent large-library performance limitation rather than an imposed scan-count limit.
+
+## 3D mascot, glass surfaces, and live activity
+
+Added a native SceneKit character and data-only public activity resolver, with shared glass controls/panels and accessibility-aware motion preferences. See MascotGlass.md for changed files and runtime acceptance. Five meaningful status tests are added; the current total is 52 source test methods (24 package, 28 native), all unrun here. Static syntax checks pass for 36 Swift files, and the Xcode target/source references include both new files. This Linux environment cannot compile or render SwiftUI/SceneKit, so appearance, interaction, signing, authentication, and GPU/energy behavior remain unverified. No screenshot or render is presented as a running application.

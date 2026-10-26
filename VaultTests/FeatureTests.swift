@@ -300,3 +300,50 @@ final class SmartFolderScanTests: XCTestCase {
     }
 
 }
+
+final class VaultActivityTests: XCTestCase {
+    func testScanActivityUsesRealCountsWithoutInventingCompletionPercentage() {
+        var input = VaultActivityInput(); input.scanStage = .organizing
+        input.discovered = 10003; input.processed = 9000; input.activeFolders = 3
+        let activity = VaultActivity.resolve(input)
+        XCTAssertEqual(activity.kind, .organizing)
+        XCTAssertTrue(activity.detail.contains("10003")); XCTAssertTrue(activity.detail.contains("9000"))
+        XCTAssertNil(activity.progress)
+    }
+    func testKnownImportProgressClampsAndUnknownTotalStaysIndeterminate() {
+        var input = VaultActivityInput(); input.importing = true
+        XCTAssertNil(VaultActivity.resolve(input).progress)
+        input.importTotal = 10; input.importProgress = 3
+        XCTAssertEqual(VaultActivity.resolve(input).progress, 0.3)
+        input.importProgress = 20
+        XCTAssertEqual(VaultActivity.resolve(input).progress, 1)
+        input.importProgress = -1
+        XCTAssertEqual(VaultActivity.resolve(input).progress, 0)
+    }
+    func testAuthenticationAndErrorsOverrideReadyOrUnlockedStatus() {
+        var input = VaultActivityInput(); input.secureSelected = true; input.secureUnlocked = true
+        input.authenticating = true
+        XCTAssertEqual(VaultActivity.resolve(input).kind, .authenticating)
+        input.hasError = true
+        XCTAssertEqual(VaultActivity.resolve(input).kind, .attention)
+    }
+    func testMonitoringReadyAndPausedAreDifferentStates() {
+        var input = VaultActivityInput(); input.activeFolders = 2
+        XCTAssertEqual(VaultActivity.resolve(input).kind, .idle)
+        XCTAssertTrue(VaultActivity.resolve(input).detail.contains("while open"))
+        input.monitoring = true
+        XCTAssertEqual(VaultActivity.resolve(input).kind, .monitoring)
+        input.monitoring = false; input.activeFolders = 0; input.pausedFolders = 2
+        XCTAssertEqual(VaultActivity.resolve(input).kind, .paused)
+    }
+    func testSecureStatusDescribesOnlySeparateSecureRecords() {
+        var input = VaultActivityInput(); input.secureSelected = true; input.catalogFiles = 500
+        let locked = VaultActivity.resolve(input)
+        XCTAssertEqual(locked.kind, .locked)
+        XCTAssertEqual(locked.detail, "Separate encrypted records")
+        input.secureUnlocked = true
+        XCTAssertEqual(VaultActivity.resolve(input).kind, .unlocked)
+        input.secureSelected = false
+        XCTAssertEqual(VaultActivity.resolve(input).kind, .idle)
+    }
+}
