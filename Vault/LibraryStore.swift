@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import VaultCore
+import UniformTypeIdentifiers
 
 struct OpenedFileEvent: Equatable { let id: UUID; let date: Date }
 
@@ -13,16 +14,19 @@ final class LibraryStore: ObservableObject {
     @Published var busy = false
     @Published var progress = 0
     @Published var total = 0
+    private var importingExportedNotes = false
     private var importTask: Task<Void, Never>?
     @Published var message: String?
     @Published var loadFailed = false
     @Published private(set) var operationFailed = false
     private let repository: LibraryRepository
     let managedDirectory: URL
+    private let notesWriter: NotesSnapshotService
 
     init(base: URL = URL.applicationSupportDirectory.appendingPathComponent("Vault", isDirectory: true)) {
         repository = LibraryRepository(url: base.appendingPathComponent("library.json"))
         managedDirectory = base.appendingPathComponent("Files", isDirectory: true)
+        notesWriter = NotesSnapshotService(root: managedDirectory)
         do { library = try repository.load() }
         catch { loadFailed = true; message = "Library could not be loaded. It has been preserved. Restart after restoring a valid library.json in Vault’s Application Support directory." }
     }
@@ -51,8 +55,18 @@ final class LibraryStore: ObservableObject {
         guard panel.runModal() == .OK else { return }
         prepare(panel.urls)
     }
+    func chooseExportedNotes() {
+        guard !busy, !loadFailed else { return }
+        let panel = NSOpenPanel(); panel.title = "Import exported Apple Notes"
+        panel.message = "Select notes exported from Apple Notes as PDF or text. They will appear in Notes and All Files; they are not linked to an iCloud source."
+        panel.allowsMultipleSelection = true; panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.pdf, .text, .rtf, .html]
+        guard panel.runModal() == .OK else { return }
+        prepare(panel.urls); importingExportedNotes = true
+    }
     func prepare(_ urls: [URL]) {
         guard !busy, !loadFailed else { return }
+        importingExportedNotes = false
         busy = true
         Task {
             defer { busy = false }
@@ -75,11 +89,19 @@ final class LibraryStore: ObservableObject {
     func performImport(copy: Bool) {
         presentingImport = false; busy = true
         let pending = candidates
+        let exportedNotes = importingExportedNotes; importingExportedNotes = false
         let paths = Set(library.files.map(\.originalLocation))
         progress = 0; total = pending.count
         importTask = Task {
             let report = await FileAccessService.run(pending, copy: copy, managedDirectory: managedDirectory, existingPaths: paths, progress: { [weak self] count, total in Task { @MainActor in self?.progress = count; self?.total = total } })
-            var next = library; next.files.append(contentsOf: report.items)
+            var next = library
+            if exportedNotes {
+                for var file in report.items {
+                    var source = ImportedNoteSource(accountID: "exported-files", accountName: "Exported Notes", folderID: "exports", folderName: "File import", noteID: file.id.uuidString, title: URL(fileURLWithPath: file.filename).deletingPathExtension().lastPathComponent)
+                    source.exportedFile = true; file.noteSource = source
+                    ImportedNoteRules.register(file, in: &next)
+                }
+            } else { next.files.append(contentsOf: report.items) }
             let saved = commit(next); busy = false; importTask = nil; candidates = []
             guard saved else {
                 message = "Metadata could not be saved. Original files are preserved. Any verified managed copies remain at \(managedDirectory.path); inspect this directory before retrying a copy import."
@@ -120,6 +142,28 @@ final class LibraryStore: ObservableObject {
         let counts = OrganizationRules.apply(facts, library: &next, workspace: &workspace)
         guard commit(next) else { return nil }
         return counts
+    }
+    func importNote(_ snapshot: ImportedNoteSnapshot) async throws -> FileItem {
+        guard !busy, !loadFailed else { throw NotesCatalogError.unavailable }
+        busy = true; defer { busy = false }
+        let id = ImportedNoteRules.existingID(for: snapshot.source, in: library) ?? UUID()
+        let old = library.files.first { $0.id == id }
+        var file = try await notesWriter.write(snapshot, id: id, existing: old)
+        if let current = library.files.first(where: { $0.id == id }) {
+            file.tags = current.tags; file.description = current.description
+            file.collectionIDs = current.collectionIDs; file.favorite = current.favorite
+        }
+        var next = library; ImportedNoteRules.register(file, in: &next)
+        guard commit(next), let saved = library.files.first(where: { $0.id == id }) else { throw NotesCatalogError.unavailable }
+        if let old, !library.files.contains(where: { $0.id != id && $0.originalLocation == old.originalLocation }) {
+            // Cleanup failure leaves the old copy on disk; it must never undo a successfully saved note.
+            try? await notesWriter.discardSuperseded(old, replacedBy: file)
+        }
+        return saved
+    }
+    enum NotesCatalogError: LocalizedError {
+        case unavailable
+        var errorDescription: String? { "The note catalog could not be saved or is busy. Any completed local snapshot and all Apple Notes originals were preserved. Retry when the library is available." }
     }
     func open(_ file: FileItem) {
         Task {

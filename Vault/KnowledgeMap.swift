@@ -50,7 +50,7 @@ struct KnowledgeMap: View {
     private var allNodes: [KnowledgeNode] {
         let subjects = workspace.data.subjects.map { KnowledgeNode(id: $0.id, title: $0.name, subtitle: "SUBJECT · \($0.fileIDs.count) FILES", symbol: "sparkle", kind: .subject, favorite: false) }
         let collections = store.library.collections.map { collection in KnowledgeNode(id: collection.id, title: collection.name, subtitle: "COLLECTION", symbol: "square.stack", kind: .collection, favorite: false) }
-        let files = store.library.files.map { file in KnowledgeNode(id: file.id, title: file.filename, subtitle: file.type.uppercased(), symbol: VaultStyle.fileSymbol(file.type), kind: .document, favorite: file.favorite) }
+        let files = store.library.files.map { file in KnowledgeNode(id: file.id, title: file.filename, subtitle: file.noteSource == nil ? file.type.uppercased() : "APPLE NOTE", symbol: file.noteSource == nil ? VaultStyle.fileSymbol(file.type) : "note.text", kind: .document, favorite: file.favorite) }
         return subjects + collections + files
     }
     private var selectedNodeID: UUID? {

@@ -4,13 +4,14 @@ import QuickLookThumbnailing
 import VaultCore
 
 private enum Section: String, CaseIterable, Identifiable {
-    case overview = "Overview", graph = "Knowledge Map", files = "All Files", subjects = "Subjects", collections = "Collections", media = "Images & Media", timeline = "Timeline", storage = "Storage & Cleanup", secure = "Secure Vault", deleted = "Recently Deleted"
+    case overview = "Overview", graph = "Knowledge Map", files = "All Files", notes = "Notes", subjects = "Subjects", collections = "Collections", media = "Images & Media", timeline = "Timeline", storage = "Storage & Cleanup", secure = "Secure Vault", deleted = "Recently Deleted"
     var id: String { rawValue }
     var symbol: String {
         switch self {
         case .overview: "square.grid.2x2"
         case .graph: "point.3.connected.trianglepath.dotted"
         case .files: "doc.on.doc"
+        case .notes: "note.text"
         case .subjects: "books.vertical"
         case .collections: "folder"
         case .media: "photo.on.rectangle"
@@ -26,8 +27,10 @@ struct WorkspaceView: View {
     @EnvironmentObject private var store: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
     @EnvironmentObject private var trash: NativeTrashService
+    @EnvironmentObject private var notes: AppleNotesStore
     @Environment(\.accessibilityReduceMotion) private var reducedMotion
     @AppStorage("cinematicMotion") private var cinematicMotion = true
+    @State private var showingNotesImport = false
     @State private var section: Section? = .overview
     @State private var columns: NavigationSplitViewVisibility = .all
     @State private var showInspector = false
@@ -97,7 +100,9 @@ struct WorkspaceView: View {
     private var selectedWorkspace: some View {
         switch currentSection {
         case .overview:
-            OverviewWorkspace(select: inspect, openMap: openMap, openCollection: openCollection)
+            OverviewWorkspace(select: inspect, openMap: openMap, openCollection: openCollection, addNotes: { showingNotesImport = true })
+        case .notes:
+            NotesWorkspace(query: query, select: inspect, addNotes: { showingNotesImport = true })
         case .graph:
             KnowledgeMap(selectedID: $selectedID, select: inspect)
         case .files, .media, .collections:
@@ -126,7 +131,7 @@ struct WorkspaceView: View {
         ToolbarItem(placement: .navigation) { navigationMenu }
         ToolbarItem {
             Button(action: store.chooseFiles) { Label("Add Files", systemImage: "plus") }
-                .disabled(store.busy || store.loadFailed || workspace.working)
+                .disabled(store.busy || store.loadFailed || workspace.working || notes.working)
         }
         ToolbarItem {
             Button { showInspector.toggle() } label: {
@@ -177,8 +182,20 @@ struct WorkspaceView: View {
             .sheet(isPresented: $store.presentingImport) { ImportReview() }
     }
 
+    private var notesPresentation: some View {
+        sheetPresentations.sheet(isPresented: $showingNotesImport) {
+            AppleNotesImportSheet(exportedFiles: importExportedNotes)
+        }
+    }
+    private func importExportedNotes() {
+        // Wait for the connector sheet to close before presenting the existing file importer.
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            store.chooseExportedNotes()
+        }
+    }
     private var scanPresentation: some View {
-        sheetPresentations.sheet(isPresented: $workspace.reviewFolder, onDismiss: workspace.cancelFolderReview) {
+        notesPresentation.sheet(isPresented: $workspace.reviewFolder, onDismiss: workspace.cancelFolderReview) {
             FolderScanReview(select: inspect, openMap: openMap)
         }
     }
@@ -242,7 +259,7 @@ struct WorkspaceView: View {
         let oldByID: [UUID: FileItem] = Dictionary(old.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         workspace.change { data in
             data.reconcile(validIDs: validIDs, additionalGraphIDs: collectionIDs)
-            for file in files where oldByID[file.id]?.modifiedAt != file.modifiedAt {
+            for file in files where file.noteSource == nil && oldByID[file.id]?.modifiedAt != file.modifiedAt {
                 data.extractedText.removeValue(forKey: file.id)
             }
         }
@@ -327,7 +344,7 @@ struct WorkspaceView: View {
         } description: {
             Text(store.library.files.isEmpty ? "Add a few files to begin. Index them where they are, or keep verified copies in Vault." : "Try another search or change your filters.")
         } actions: {
-            Button("Add Files…", action: store.chooseFiles).disabled(store.busy || store.loadFailed || workspace.working)
+            Button("Add Files…", action: store.chooseFiles).disabled(store.busy || store.loadFailed || workspace.working || notes.working)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 

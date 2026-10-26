@@ -4,9 +4,11 @@ import VaultCore
 struct OverviewWorkspace: View {
     @EnvironmentObject private var store: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
+    @EnvironmentObject private var notes: AppleNotesStore
     let select: (UUID) -> Void
     let openMap: () -> Void
     let openCollection: (UUID) -> Void
+    let addNotes: () -> Void
     @State private var showLocations = false
     private var recentlyOpened: [FileItem] {
         store.library.files.filter { workspace.data.openedFiles?[$0.id] != nil }.sorted {
@@ -22,7 +24,8 @@ struct OverviewWorkspace: View {
                 }.padding(.top, 10)
                 HStack {
                     Button(action: workspace.approveFolder) { Label("Scan Folders", systemImage: "folder.badge.plus") }
-                        .buttonStyle(CinematicButtonStyle(prominent: true)).disabled(workspace.working || store.busy)
+                        .buttonStyle(CinematicButtonStyle(prominent: true)).disabled(workspace.working || store.busy || notes.working)
+                    Button(action: addNotes) { Label("Add Notes", systemImage: "note.text") }.disabled(workspace.working || store.busy || notes.working)
                     if let scan = workspace.data.lastScan {
                         Button("Last Scan · \(scan.addedIDs.count) added") { workspace.showScanResults() }.font(.caption)
                     }

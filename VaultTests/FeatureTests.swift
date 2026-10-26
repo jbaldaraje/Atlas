@@ -347,3 +347,44 @@ final class VaultActivityTests: XCTestCase {
         XCTAssertEqual(VaultActivity.resolve(input).kind, .idle)
     }
 }
+
+@MainActor
+final class NotesSnapshotTests: XCTestCase {
+    func testImportRefreshAndRestartPreserveIdentityMetadataAndOtherFiles() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = LibraryStore(base: root)
+        let source = ImportedNoteSource(accountID: "account", accountName: "iCloud", folderID: "folder", folderName: "Notes", noteID: "note-1", title: "Research")
+        let first = try await library.importNote(ImportedNoteSnapshot(source: source, text: "First text"))
+        var edited = first; edited.tags = ["Study"]; edited.favorite = true
+        XCTAssertTrue(library.update(edited))
+        let sibling = URL(fileURLWithPath: first.originalLocation).deletingLastPathComponent().appendingPathComponent("keep.txt")
+        try Data("user file".utf8).write(to: sibling)
+        let refreshed = try await library.importNote(ImportedNoteSnapshot(source: source, text: "Updated text"))
+        XCTAssertEqual(refreshed.id, first.id); XCTAssertEqual(library.library.files.count, 1)
+        XCTAssertEqual(refreshed.tags, ["Study"]); XCTAssertTrue(refreshed.favorite)
+        XCTAssertEqual(try String(contentsOfFile: refreshed.originalLocation), "Updated text")
+        XCTAssertEqual(try String(contentsOf: sibling), "user file")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: first.originalLocation))
+        let unchanged = try await library.importNote(ImportedNoteSnapshot(source: source, text: "Updated text"))
+        XCTAssertEqual(unchanged.originalLocation, refreshed.originalLocation)
+        XCTAssertEqual(LibraryStore(base: root).library.files.first?.noteSource?.noteID, "note-1")
+    }
+    func testRefreshDoesNotOverwriteLocalEdits() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = LibraryStore(base: root)
+        let source = ImportedNoteSource(accountID: "account", accountName: "iCloud", folderID: "folder", folderName: "Notes", noteID: "note-1", title: "Research")
+        let first = try await library.importNote(ImportedNoteSnapshot(source: source, text: "Initial"))
+        try Data("Keep my manual edits".utf8).write(to: URL(fileURLWithPath: first.originalLocation))
+        do { _ = try await library.importNote(ImportedNoteSnapshot(source: source, text: "Remote update")); XCTFail("Local edit overwritten") }
+        catch {}
+        XCTAssertEqual(try String(contentsOfFile: first.originalLocation), "Keep my manual edits")
+        XCTAssertEqual(library.library.files.first?.originalLocation, first.originalLocation)
+    }
+    func testNotesPermissionAndLockErrorsHaveSpecificSafeMessages() {
+        XCTAssertTrue(AppleNotesBridge.NotesError.automation(-1743).errorDescription?.contains("Automation") == true)
+        XCTAssertTrue(AppleNotesBridge.NotesError.automation(-2700).errorDescription?.contains("locked") == true)
+        XCTAssertTrue(AppleNotesBridge.NotesError.automation(-1712).errorDescription?.contains("respond in time") == true)
+    }
+}

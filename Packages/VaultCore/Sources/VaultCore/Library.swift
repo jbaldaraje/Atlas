@@ -16,6 +16,7 @@ public struct FileItem: Identifiable, Codable, Equatable, Sendable {
     public var tags: [String]
     public var collectionIDs: Set<UUID>
     public var fileIdentity: String? = nil
+    public var noteSource: ImportedNoteSource? = nil
     public var favorite: Bool
     public init(id: UUID = UUID(), filename: String, type: String, bookmark: Data, originalLocation: String, ownership: StorageOwnership, size: Int64, createdAt: Date? = nil, modifiedAt: Date? = nil, indexedAt: Date = .now, description: String = "", tags: [String] = [], collectionIDs: Set<UUID> = [], favorite: Bool = false) {
         self.id = id; self.filename = filename; self.type = type; self.bookmark = bookmark

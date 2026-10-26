@@ -7,6 +7,7 @@ struct VaultMascotPanel: View {
     @EnvironmentObject private var workspace: WorkspaceStore
     @EnvironmentObject private var secure: SecureStore
     @EnvironmentObject private var trash: NativeTrashService
+    @EnvironmentObject private var notes: AppleNotesStore
     @Environment(\.accessibilityReduceMotion) private var reducedMotion
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.controlActiveState) private var windowState
@@ -23,8 +24,8 @@ struct VaultMascotPanel: View {
         input.secureSelected = secureSection; input.secureUnlocked = secure.unlocked
         input.scanStage = workspace.scanIsActive ? workspace.activeScan?.stage : nil
         input.discovered = workspace.activeScan?.discovered ?? 0; input.processed = workspace.activeScan?.processed ?? 0
-        input.importing = library.busy && !workspace.monitoringActive; input.importProgress = library.progress; input.importTotal = library.total
-        input.monitoring = workspace.monitoringActive; input.working = workspace.working; input.processingLabel = workspace.processingLabel
+        input.importing = library.busy && !workspace.monitoringActive && !notes.working; input.importProgress = library.progress; input.importTotal = library.total
+        input.monitoring = workspace.monitoringActive; input.working = workspace.working || notes.working; input.processingLabel = notes.working ? notes.stage : workspace.processingLabel
         input.activeFolders = workspace.data.locations.filter { !$0.paused }.count
         input.pausedFolders = workspace.data.locations.filter(\.paused).count
         input.catalogFiles = library.library.files.count

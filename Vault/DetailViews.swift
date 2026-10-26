@@ -30,6 +30,16 @@ struct FileInspector: View {
                     Text(file.ownership == .original ? "Indexed original" : "Vault-managed copy").font(.caption2).foregroundStyle(VaultStyle.teal)
                 }
                 HStack { Button("Open") { store.open(file) }; Button("Preview") { preview = true }; Button { store.reveal(file) } label: { Image(systemName: "arrow.up.forward.square") }.help("Reveal in Finder").accessibilityLabel("Reveal in Finder") }
+                if let source = file.noteSource {
+                    DisclosureGroup("Apple Notes source") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(source.accountName + " · " + source.folderName)
+                            if let date = source.sourceModifiedAt { Text("Modified in Notes: " + date.formatted()).font(.caption) }
+                            Text("Local snapshot: " + source.importedAt.formatted()).font(.caption)
+                            Text("Plain-text copy. Refresh in the Notes workspace; originals in Apple Notes are unchanged.").font(.caption).foregroundStyle(.secondary)
+                        }.padding(.top, 10)
+                    }
+                }
                 Divider()
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Description & tags").font(.headline)

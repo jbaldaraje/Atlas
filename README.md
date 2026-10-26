@@ -15,7 +15,7 @@ cd Packages/VaultCore
 swift test
 ```
 
-The package contains **24 tests**; the Xcode integration target contains **28 tests**. They have been written but **not executed** here. This Linux machine has neither Swift nor the macOS SDK. [macOS CI](.github/workflows/macos.yml) is provided but has not run. Unsigned CLI builds cannot validate signed sandbox behavior.
+The package contains **28 tests**; the Xcode integration target contains **31 tests**. They have been written but **not executed** here. This Linux machine has neither Swift nor the macOS SDK. [macOS CI](.github/workflows/macos.yml) is provided but has not run. Unsigned CLI builds cannot validate signed sandbox behavior.
 
 ## If Xcode reports “Unable to find module dependency: VaultCore”
 
@@ -64,3 +64,7 @@ The Overview now shows real recently added/opened files and a compact network en
 ## Sidebar mascot and glass appearance
 
 The left panel includes a native 3D mascot and live local activity status for scans, import, folder checks, authentication, secure locking, and errors. Panels and buttons use glass materials with restrained cinematic lighting. In Settings, use **Cinematic animations** and **Show 3D sidebar mascot** to control motion and space. macOS Reduce Motion/Reduce Transparency are respected, and continuous mascot rendering pauses in inactive windows. See [mascot, glass, privacy, and validation details](docs/MascotGlass.md).
+
+## Import iCloud / Apple Notes
+
+Open **Notes → Add iCloud / Apple Notes** (also **Add Notes** on Overview), connect to Apple Notes on this Mac, allow the Automation prompt, and select your iCloud account, folder, and unlocked notes. Vault imports readable local plain-text snapshots and can refresh them manually. It does not edit originals or sign in directly to iCloud. Locked notes and attachments are excluded; imported copies are ordinary unencrypted library files. Exported PDF/text notes are supported as a fallback through the existing file importer. See [permissions, use, safety, and pending native validation](docs/AppleNotes.md).

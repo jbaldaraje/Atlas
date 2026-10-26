@@ -6,14 +6,14 @@ Linux, with no Swift compiler, Xcode, or macOS SDK. **No Swift compilation, XCTe
 
 Static checks passed after the expanded implementation:
 
-- Swift grammar parsing of all **36 Swift files**, using tree-sitter-swift. This does not perform type checking or validate native framework APIs.
+- Swift grammar parsing of all **42 Swift files**, using tree-sitter-swift. This does not perform type checking or validate native framework APIs.
 - OpenStep parsing of `project.pbxproj` and resolution of declared object, product, package, configuration, and build-phase references.
-- Exact membership of all **27 application/integration Swift sources** in project references, including new services and tests.
+- Exact membership of all **31 application/integration Swift sources** in project references, including new services and tests.
 - Shared Xcode scheme XML and entitlement plist parsing.
 - App Sandbox, user-selected read/write capability, and app-scoped bookmark configuration; no network client entitlement. Original index bookmarks explicitly request read-only access.
 - `git diff --check` returned success. All source deliverables are untracked new files in the initially empty, unborn repository, so this is not a tracked-diff review.
 
-Validation parsers were installed from PyPI into `/tmp` and are not app dependencies. The repository's own automated tests are **24 domain/package test methods and 28 macOS integration test methods**; all are currently **unrun**. Syntax parser checks are not substitutes for them.
+Validation parsers were installed from PyPI into `/tmp` and are not app dependencies. The repository's own automated tests are **28 domain/package test methods and 31 macOS integration test methods**; all are currently **unrun**. Syntax parser checks are not substitutes for them.
 
 ## Required next validation
 
@@ -64,3 +64,9 @@ Added native regression sources for 10,003-file discovery with bounded chunks; i
 ## 3D mascot, glass surfaces, and live activity
 
 Added a native SceneKit character and data-only public activity resolver, with shared glass controls/panels and accessibility-aware motion preferences. See MascotGlass.md for changed files and runtime acceptance. Five meaningful status tests are added; the current total is 52 source test methods (24 package, 28 native), all unrun here. Static syntax checks pass for 36 Swift files, and the Xcode target/source references include both new files. This Linux environment cannot compile or render SwiftUI/SceneKit, so appearance, interaction, signing, authentication, and GPU/energy behavior remain unverified. No screenshot or render is presented as a running application.
+
+## Apple Notes / iCloud snapshot integration
+
+Added a read-only user-initiated Apple Notes Automation bridge, account/folder/note selection, local plain-text snapshots with stable source identity/manual refresh, a Notes reader, and exported-file fallback. See AppleNotes.md for permissions, limits, changed/new files, and the signed macOS acceptance checklist. The sandbox exception is scoped to com.apple.Notes; both app build configurations include NSAppleEventsUsageDescription. No network entitlement or private database access is added.
+
+Static Swift syntax parsing and native project/reference membership checks pass for 42 files. Test sources total 59 methods (28 package and 31 native). Seven additional tests cover source identity, source collections, filenames, legacy decoding, snapshot refresh/restart, user edits/sibling preservation, and safe error messages. Tests remain unrun. Real Notes scripting/permission behavior and the native reader require macOS; no actual note was accessed from this cloud task.
