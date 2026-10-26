@@ -67,75 +67,191 @@ struct WorkspaceView: View {
             }
         }
     }
-    var body: some View {
+    // Keep independently type-checked boundaries between layout, events, and presentation.
+    var body: some View { removalPresentation }
+
+    private var navigationLayout: some View {
         NavigationSplitView(columnVisibility: $columns) {
             sidebar
         } detail: {
-            VStack(alignment: .leading, spacing: 0) {
-                header
-                Divider().opacity(0.45)
-                if section == .overview {
-                    OverviewWorkspace(select: inspect, openMap: { section = .graph }, openCollection: { id in collectionID = id; section = .collections })
-                } else if section == .graph {
-                    KnowledgeMap(selectedID: $selectedID, select: inspect)
-                } else if [.files, .media, .collections].contains(section ?? .files) {
-                    libraryContent
-                } else { FeatureWorkspace(section: section?.rawValue ?? "", select: inspect).padding(.top, 18) }
-            }
-            .background { ObservatoryBackground(grid: false) }
-            .navigationTitle("Vault — \(section?.rawValue ?? "Overview")")
-        }
-        .inspector(isPresented: $showInspector) {
-            ContextInspector(id: selectedID, select: inspect, remove: { removing = $0 })
-                .inspectorColumnWidth(min: 270, ideal: 310, max: 380)
-        }
-        .tint(accent)
-        .searchable(text: $query, prompt: "Search names, descriptions, and tags")
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Menu {
-                    ForEach(Section.allCases) { item in Button { section = item } label: { Label(item.rawValue, systemImage: item.symbol) } }
-                } label: { Image(systemName: "square.stack.3d.up") }.help("Navigate workspace").accessibilityLabel("Navigate workspace")
-            }
-            ToolbarItem { Button(action: store.chooseFiles) { Label("Add Files", systemImage: "plus") }.disabled(store.busy || store.loadFailed) }
-            ToolbarItem { Button { showInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") }.keyboardShortcut("i", modifiers: [.command, .option]).help("Toggle inspector") }
-        }
-        .task { workspace.startMonitoring(library: store) }
-        .onChange(of: store.openedEvent) { _, event in
-            if let event { workspace.change { data in
-                var opened = data.openedFiles ?? [:]; opened[event.id] = event.date; data.openedFiles = opened
-            } }
-        }
-        .onChange(of: store.library.files) { old, files in
-            workspace.change { data in
-                data.reconcile(validIDs: Set(files.map(\.id)), additionalGraphIDs: Set(store.library.collections.map(\.id)))
-                for file in files where old.first(where: { $0.id == file.id })?.modifiedAt != file.modifiedAt {
-                    data.extractedText.removeValue(forKey: file.id)
-                }
-            }
-        }
-        .alert("Workspace", isPresented: Binding(get: { workspace.error != nil }, set: { if !$0 { workspace.error = nil } })) { Button("OK") { workspace.error = nil } } message: { Text(workspace.error ?? "") }
-        .alert("Filesystem Operation", isPresented: Binding(get: { trash.error != nil }, set: { if !$0 { trash.error = nil } })) { Button("OK") { trash.error = nil } } message: { Text(trash.error ?? "") }
-        .onChange(of: section) { _, next in if next != .collections { collectionID = nil }; selectedID = nil; selectedIDs = []; showInspector = false }
-        .sheet(isPresented: $bulkEditor) { BulkEditor(ids: selectedIDs) }
-        .dropDestination(for: URL.self) { urls, _ in
-            guard [.overview, .files, .media, .collections].contains(section ?? .overview), !urls.isEmpty, !store.busy, !store.loadFailed else { return false }
-            store.prepare(urls); return true
-        }
-        .sheet(isPresented: $store.presentingImport) { ImportReview() }
-        .alert("Vault", isPresented: Binding(get: { store.message != nil }, set: { if !$0 { store.message = nil } })) { Button("OK") { store.message = nil } } message: { Text(store.message ?? "") }
-        .alert("New collection", isPresented: $newCollection) {
-            TextField("Collection name", text: $collectionName)
-            Button("Create") { store.addCollection(collectionName); collectionName = "" }
-            Button("Cancel", role: .cancel) { collectionName = "" }
-        }
-        .confirmationDialog("Remove from Vault’s index?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
-            Button("Remove index entry", role: .destructive) { if let file = removing { store.removeFromIndex(file.id); selectedID = nil }; removing = nil }
-            Button("Cancel", role: .cancel) { removing = nil }
-        } message: {
-            Text("\(removing?.filename ?? "")\n\(removing?.originalLocation ?? "")\nThe file stays on disk. Vault descriptions, tags, and collection memberships are removed. Managed copies also remain on disk.")
+            workspaceDetail
         }
     }
+
+    private var workspaceDetail: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            Divider().opacity(0.45)
+            selectedWorkspace
+        }
+        .background { ObservatoryBackground(grid: false) }
+        .navigationTitle("Vault — \(currentSection.rawValue)")
+    }
+
+    private var currentSection: Section { section ?? .overview }
+
+    @ViewBuilder
+    private var selectedWorkspace: some View {
+        switch currentSection {
+        case .overview:
+            OverviewWorkspace(select: inspect, openMap: openMap, openCollection: openCollection)
+        case .graph:
+            KnowledgeMap(selectedID: $selectedID, select: inspect)
+        case .files, .media, .collections:
+            libraryContent
+        default:
+            FeatureWorkspace(section: currentSection.rawValue, select: inspect)
+                .padding(.top, 18)
+        }
+    }
+
+    private var inspectedWorkspace: some View {
+        navigationLayout
+            .inspector(isPresented: $showInspector) { contextInspector }
+            .tint(accent)
+            .searchable(text: $query, prompt: "Search names, descriptions, and tags")
+            .toolbar { workspaceToolbar }
+    }
+
+    private var contextInspector: some View {
+        ContextInspector(id: selectedID, select: inspect, remove: requestRemoval)
+            .inspectorColumnWidth(min: 270, ideal: 310, max: 380)
+    }
+
+    @ToolbarContentBuilder
+    private var workspaceToolbar: some ToolbarContent {
+        ToolbarItem(placement: .navigation) { navigationMenu }
+        ToolbarItem {
+            Button(action: store.chooseFiles) { Label("Add Files", systemImage: "plus") }
+                .disabled(store.busy || store.loadFailed)
+        }
+        ToolbarItem {
+            Button { showInspector.toggle() } label: {
+                Label("Inspector", systemImage: "sidebar.right")
+            }
+            .keyboardShortcut("i", modifiers: [.command, .option])
+            .help("Toggle inspector")
+        }
+    }
+
+    private var navigationMenu: some View {
+        Menu {
+            ForEach(Section.allCases) { item in
+                Button { section = item } label: {
+                    Label(item.rawValue, systemImage: item.symbol)
+                }
+            }
+        } label: { Image(systemName: "square.stack.3d.up") }
+        .help("Navigate workspace")
+        .accessibilityLabel("Navigate workspace")
+    }
+
+    private var observedWorkspace: some View {
+        inspectedWorkspace
+            .task { workspace.startMonitoring(library: store) }
+            .onChange(of: store.openedEvent) { _, event in recordOpenedFile(event) }
+            .onChange(of: store.library.files) { old, files in reconcileFiles(old: old, files: files) }
+            .onChange(of: section) { _, next in changeSection(next) }
+            .dropDestination(for: URL.self) { urls, _ in acceptDroppedFiles(urls) }
+    }
+
+    private var errorPresentations: some View {
+        observedWorkspace
+            .alert("Workspace", isPresented: hasWorkspaceError) {
+                Button("OK") { workspace.error = nil }
+            } message: { Text(workspace.error ?? "") }
+            .alert("Filesystem Operation", isPresented: hasFilesystemError) {
+                Button("OK") { trash.error = nil }
+            } message: { Text(trash.error ?? "") }
+            .alert("Vault", isPresented: hasLibraryMessage) {
+                Button("OK") { store.message = nil }
+            } message: { Text(store.message ?? "") }
+    }
+
+    private var sheetPresentations: some View {
+        errorPresentations
+            .sheet(isPresented: $bulkEditor) { BulkEditor(ids: selectedIDs) }
+            .sheet(isPresented: $store.presentingImport) { ImportReview() }
+    }
+
+    private var collectionPresentation: some View {
+        sheetPresentations.alert("New collection", isPresented: $newCollection) {
+            TextField("Collection name", text: $collectionName)
+            Button("Create", action: createCollection)
+            Button("Cancel", role: .cancel) { collectionName = "" }
+        }
+    }
+
+    private var removalPresentation: some View {
+        collectionPresentation.confirmationDialog(
+            "Remove from Vault’s index?",
+            isPresented: isRemoving,
+            titleVisibility: .visible
+        ) {
+            Button("Remove index entry", role: .destructive, action: removeIndexEntry)
+            Button("Cancel", role: .cancel) { removing = nil }
+        } message: { Text(removalMessage) }
+    }
+
+    private var hasWorkspaceError: Binding<Bool> {
+        Binding(get: { workspace.error != nil }, set: { if !$0 { workspace.error = nil } })
+    }
+    private var hasFilesystemError: Binding<Bool> {
+        Binding(get: { trash.error != nil }, set: { if !$0 { trash.error = nil } })
+    }
+    private var hasLibraryMessage: Binding<Bool> {
+        Binding(get: { store.message != nil }, set: { if !$0 { store.message = nil } })
+    }
+    private var isRemoving: Binding<Bool> {
+        Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })
+    }
+    private var removalMessage: String {
+        let filename: String = removing?.filename ?? ""
+        let location: String = removing?.originalLocation ?? ""
+        return "\(filename)\n\(location)\nThe file stays on disk. Vault descriptions, tags, and collection memberships are removed. Managed copies also remain on disk."
+    }
+
+    private func openMap() { section = .graph }
+    private func openCollection(_ id: UUID) { collectionID = id; section = .collections }
+    private func requestRemoval(_ file: FileItem) { removing = file }
+    private func createCollection() { store.addCollection(collectionName); collectionName = "" }
+    private func removeIndexEntry() {
+        if let file = removing { store.removeFromIndex(file.id); selectedID = nil }
+        removing = nil
+    }
+    private func recordOpenedFile(_ event: OpenedFileEvent?) {
+        guard let event else { return }
+        workspace.change { data in
+            var opened: [UUID: Date] = data.openedFiles ?? [:]
+            opened[event.id] = event.date
+            data.openedFiles = opened
+        }
+    }
+    private func reconcileFiles(old: [FileItem], files: [FileItem]) {
+        let validIDs = Set<UUID>(files.map(\.id))
+        let collectionIDs = Set<UUID>(store.library.collections.map(\.id))
+        let oldByID: [UUID: FileItem] = Dictionary(old.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        workspace.change { data in
+            data.reconcile(validIDs: validIDs, additionalGraphIDs: collectionIDs)
+            for file in files where oldByID[file.id]?.modifiedAt != file.modifiedAt {
+                data.extractedText.removeValue(forKey: file.id)
+            }
+        }
+    }
+    private func changeSection(_ next: Section?) {
+        if next != .collections { collectionID = nil }
+        selectedID = nil; selectedIDs = []; showInspector = false
+    }
+    private func acceptDroppedFiles(_ urls: [URL]) -> Bool {
+        switch currentSection {
+        case .overview, .files, .media, .collections: break
+        default: return false
+        }
+        guard !urls.isEmpty, !store.busy, !store.loadFailed else { return false }
+        store.prepare(urls)
+        return true
+    }
+
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
@@ -184,34 +300,55 @@ struct WorkspaceView: View {
                 VStack(alignment: .leading, spacing: 12) { organizationControls; HStack { presentationControls; Spacer() } }
             }
             if results.isEmpty {
-                ContentUnavailableView {
-                    Label(store.library.files.isEmpty ? "Make room for clarity" : "No matching files", systemImage: "doc.badge.plus")
-                } description: {
-                    Text(store.library.files.isEmpty ? "Add a few files to begin. Index them where they are, or keep verified copies in Vault." : "Try another search or change your filters.")
-                } actions: { Button("Add Files…", action: store.chooseFiles).disabled(store.busy || store.loadFailed) }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                libraryEmptyState
             } else {
-                ScrollView {
-                    LazyVGrid(columns: listMode ? [GridItem(.flexible())] : [GridItem(.adaptive(minimum: 170), spacing: 16)], spacing: 16) {
-                        ForEach(results) { file in
-                            Button {
-                                inspect(file.id)
-                                if NSEvent.modifierFlags.contains(.command) {
-                                    if selectedIDs.contains(file.id) { selectedIDs.remove(file.id) } else { selectedIDs.insert(file.id) }
-                                } else { selectedIDs = [file.id] }
-                            } label: { fileCard(file) }.buttonStyle(.plain)
-                                .contextMenu {
-                                    Button("Open in Default App") { store.open(file) }
-                                    Button("Reveal in Finder") { store.reveal(file) }
-                                    Button(file.favorite ? "Remove Favorite" : "Favorite") { var updated = file; updated.favorite.toggle(); store.update(updated) }
-                                    Divider()
-                                    Button("Remove from Index…", role: .destructive) { removing = file }
-                                }
-                        }
-                    }.padding(2)
-                }
-                Text("\(results.count) files · ⌘-click to select multiple · Stored locally").font(.caption).foregroundStyle(.secondary)
+                fileGrid
+                Text("\(results.count) files · ⌘-click to select multiple · Stored locally")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }.padding(.horizontal, 24).padding(.vertical, 18)
+    }
+
+    private var libraryEmptyState: some View {
+        ContentUnavailableView {
+            Label(store.library.files.isEmpty ? "Make room for clarity" : "No matching files", systemImage: "doc.badge.plus")
+        } description: {
+            Text(store.library.files.isEmpty ? "Add a few files to begin. Index them where they are, or keep verified copies in Vault." : "Try another search or change your filters.")
+        } actions: {
+            Button("Add Files…", action: store.chooseFiles).disabled(store.busy || store.loadFailed)
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var gridColumns: [GridItem] {
+        listMode ? [GridItem(.flexible())] : [GridItem(.adaptive(minimum: 170), spacing: 16)]
+    }
+    private var fileGrid: some View {
+        ScrollView {
+            LazyVGrid(columns: gridColumns, spacing: 16) {
+                ForEach(results) { file in fileButton(file) }
+            }.padding(2)
+        }
+    }
+    private func fileButton(_ file: FileItem) -> some View {
+        Button { selectFile(file.id) } label: { fileCard(file) }
+            .buttonStyle(.plain)
+            .contextMenu { fileMenu(file) }
+    }
+    @ViewBuilder
+    private func fileMenu(_ file: FileItem) -> some View {
+        Button("Open in Default App") { store.open(file) }
+        Button("Reveal in Finder") { store.reveal(file) }
+        Button(file.favorite ? "Remove Favorite" : "Favorite") {
+            var updated = file; updated.favorite.toggle(); store.update(updated)
+        }
+        Divider()
+        Button("Remove from Index…", role: .destructive) { requestRemoval(file) }
+    }
+    private func selectFile(_ id: UUID) {
+        inspect(id)
+        if NSEvent.modifierFlags.contains(.command) {
+            if selectedIDs.contains(id) { selectedIDs.remove(id) } else { selectedIDs.insert(id) }
+        } else { selectedIDs = [id] }
     }
     private var organizationControls: some View {
         HStack {
