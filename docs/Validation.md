@@ -6,14 +6,14 @@ Linux, with no Swift compiler, Xcode, or macOS SDK. **No Swift compilation, XCTe
 
 Static checks passed after the expanded implementation:
 
-- Swift grammar parsing of all **42 Swift files**, using tree-sitter-swift. This does not perform type checking or validate native framework APIs.
+- Swift grammar parsing of all **46 Swift files**, using tree-sitter-swift. This does not perform type checking or validate native framework APIs.
 - OpenStep parsing of `project.pbxproj` and resolution of declared object, product, package, configuration, and build-phase references.
-- Exact membership of all **31 application/integration Swift sources** in project references, including new services and tests.
+- Exact membership of all **31 application Swift sources** and **16 native integration source memberships** in project references, including new services and tests.
 - Shared Xcode scheme XML and entitlement plist parsing.
 - App Sandbox, user-selected read/write capability, and app-scoped bookmark configuration; no network client entitlement. Original index bookmarks explicitly request read-only access.
-- `git diff --check` returned success. All source deliverables are untracked new files in the initially empty, unborn repository, so this is not a tracked-diff review.
+- `git diff --check` returned success.
 
-Validation parsers were installed from PyPI into `/tmp` and are not app dependencies. The repository's own automated tests are **28 domain/package test methods and 31 macOS integration test methods**; all are currently **unrun**. Syntax parser checks are not substitutes for them.
+Validation parsers were installed from PyPI into `/tmp` and are not app dependencies. The repository's own automated tests are **37 domain/package test methods and 39 macOS integration test methods**; all are currently **unrun**. Syntax parser checks are not substitutes for them.
 
 ## Required next validation
 
@@ -76,3 +76,9 @@ Static Swift syntax parsing and native project/reference membership checks pass 
 Added an initial bounded counting pass, optional persisted work counters, estimated overall completed/remaining percentages, and progress updates for indexing, organization, and final catalog review. Added a shared progress meter/radar, minimize/expand controls, and a persistent status bar that retains results without reopening the sheet. The mascot shares measured progress. Counting remains indeterminate until the total is known; estimates reserve finalization and do not claim 100% for stopped jobs. See ScanProgress.md for weighting, lifecycle, limitations, and manual acceptance.
 
 Four domain and four native regression methods were added, with measured totals also asserted in the existing multi-chunk test. The source now contains 67 test methods (32 package, 35 native). Swift grammar checks pass for all 43 Swift files; project references and exact source memberships, scheme XML, entitlement plist, and whitespace checks pass. Swift/Xcode remain unavailable, so native build, tests, appearance, accessibility, and actual navigation-while-scanning behavior remain unverified.
+
+## Large Knowledge Map first-open optimization
+
+The supplied debugger screenshot stopped in per-node context-menu construction at a linear catalog lookup, with SIGTERM and a repeated-update warning. Source inspection also found catalog-wide node/edge generation and sorting in computed render properties, plus synchronous full-workspace persistence during initial layout. Replaced these with an actor-backed revision cache, background bounded projections, full-catalog search/paging, action-time file lookup, and a separately persisted background layout. Camera/hover/animation operate on a small snapshot; opening the map does not save workspace metadata. See KnowledgeMapPerformance.md for scope, remaining costs, and native acceptance.
+
+Five domain and four native test methods were added, including 30,123-file graph and 30,100-coordinate layout fixtures, bounded/dense projections, search, full paging, Focus/layers, an XCTest performance measurement, index reuse, no workspace write on first load, cancellation, and node-position persistence. Current total: 76 source test methods (37 package, 39 native), all unrun here. Static syntax passes for 46 Swift files; project references, source membership, entitlement plist, scheme XML, and whitespace checks pass. Native compilation, runtime profiling, timings, memory/energy changes, the repeated-update warning, and actual large-library first-open behavior remain unverified because Swift/Xcode/macOS are unavailable.

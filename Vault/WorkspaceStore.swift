@@ -5,6 +5,7 @@ import VaultCore
 @MainActor
 final class WorkspaceStore: ObservableObject {
     @Published private(set) var data = Workspace()
+    private(set) var graphRevision = UUID()
     @Published var error: String?
     @Published var recoveryEntries: [RecoveryEntry] = []
     private let recovery = RecoveryService()
@@ -49,7 +50,9 @@ final class WorkspaceStore: ObservableObject {
         var next = data; body(&next)
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try JSONEncoder().encode(next).write(to: url, options: .atomic); data = next; return true
+            try JSONEncoder().encode(next).write(to: url, options: .atomic)
+            if next.subjects != data.subjects || next.relationships != data.relationships { graphRevision = UUID() }
+            data = next; return true
         } catch { self.error = "Workspace changes could not be saved."; return false }
     }
     func analyze(_ files: [FileItem]) {

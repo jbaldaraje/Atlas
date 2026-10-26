@@ -8,6 +8,7 @@ struct OpenedFileEvent: Equatable { let id: UUID; let date: Date }
 @MainActor
 final class LibraryStore: ObservableObject {
     @Published private(set) var library = Library()
+    private(set) var graphRevision = UUID()
     @Published private(set) var openedEvent: OpenedFileEvent?
     @Published var candidates: [ImportCandidate] = []
     @Published var presentingImport = false
@@ -30,9 +31,13 @@ final class LibraryStore: ObservableObject {
         do { library = try repository.load() }
         catch { loadFailed = true; message = "Library could not be loaded. It has been preserved. Restart after restoring a valid library.json in Vault’s Application Support directory." }
     }
-    @discardableResult private func commit(_ next: Library) -> Bool {
+    @discardableResult private func commit(_ next: Library, graphChanged: Bool = true) -> Bool {
         guard !loadFailed else { return false }
-        do { try repository.save(next); library = next; operationFailed = false; return true }
+        do {
+            try repository.save(next)
+            if graphChanged { graphRevision = UUID() }
+            library = next; operationFailed = false; return true
+        }
         catch { operationFailed = true; message = "Metadata could not be saved. Your previous library remains unchanged."; return false }
     }
     @discardableResult func update(_ file: FileItem) -> Bool {
@@ -133,7 +138,7 @@ final class LibraryStore: ObservableObject {
                 next.files[index].fileIdentity = try? FileAccessService.withAccess(next.files[index]) { FileAccessService.identity(at: $0) }
             }
             let merge = next.mergeScanned(report.items)
-            guard commit(next) else { return CatalogSyncResult(attempted: report.items.count + report.failures.count, errors: ["Catalog metadata could not be saved."]) }
+            guard commit(next, graphChanged: !merge.added.isEmpty || !merge.updated.isEmpty) else { return CatalogSyncResult(attempted: report.items.count + report.failures.count, errors: ["Catalog metadata could not be saved."]) }
             return CatalogSyncResult(merge: merge, attempted: report.items.count + report.failures.count, errors: report.failures.map { "Unavailable file: " + $0 })
         } catch { return CatalogSyncResult(errors: [error.localizedDescription]) }
     }

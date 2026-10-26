@@ -477,3 +477,74 @@ final class NotesSnapshotTests: XCTestCase {
         XCTAssertTrue(AppleNotesBridge.NotesError.automation(-1712).errorDescription?.contains("respond in time") == true)
     }
 }
+
+@MainActor
+final class KnowledgeGraphEngineTests: XCTestCase {
+    private func fixture() -> Library {
+        var library = Library()
+        library.files = (0..<200).map {
+            FileItem(filename: "File-\($0).txt", type: "txt", bookmark: Data(), originalLocation: "/fixture/\($0)", ownership: .original, size: 1)
+        }
+        return library
+    }
+    func testIndexReusedAcrossQueriesAndFirstOpenDoesNotWriteWorkspace() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let workspaceURL = root.appendingPathComponent("workspace.json")
+        let original = Data("preserve workspace".utf8); try original.write(to: workspaceURL)
+        let engine = KnowledgeGraphEngine(base: root), library = fixture()
+        let revision = GraphRevision(library: UUID(), workspace: UUID())
+        let initial = GraphRequest(revision: revision, query: GraphQuery())
+        let first = try await engine.prepare(request: initial, library: library, subjects: [], relationships: [], legacyPositions: [:])
+        XCTAssertEqual(first.positions.count, GraphProjection.nodeBudget)
+        XCTAssertEqual(try Data(contentsOf: workspaceURL), original)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("graph-layout.json").path))
+        var query = GraphQuery(); query.text = "File-199.txt"
+        let search = try await engine.prepare(request: GraphRequest(revision: revision, query: query), library: library, subjects: [], relationships: [], legacyPositions: [:])
+        XCTAssertEqual(search.projection.nodes.map(\.id), [library.files.last!.id])
+        let builds = await engine.buildCount; XCTAssertEqual(builds, 1)
+        _ = try await engine.prepare(request: GraphRequest(revision: GraphRevision(library: UUID(), workspace: revision.workspace), query: query), library: library, subjects: [], relationships: [], legacyPositions: [:])
+        let changedBuilds = await engine.buildCount; XCTAssertEqual(changedBuilds, 2)
+    }
+    func testLargeLegacyLayoutIsBoundedAndDraggedPositionSurvivesRestart() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let engine = KnowledgeGraphEngine(base: root), library = fixture()
+        var legacy = Dictionary(uniqueKeysWithValues: (0..<30_100).map { _ in (UUID(), SpatialPoint(x: 99999, y: 99999)) })
+        let id = library.files[0].id, original = SpatialPoint(x: 200, y: 100)
+        legacy[id] = original
+        let request = GraphRequest(revision: GraphRevision(library: UUID(), workspace: UUID()), query: GraphQuery())
+        let first = try await engine.prepare(request: request, library: library, subjects: [], relationships: [], legacyPositions: legacy)
+        XCTAssertEqual(first.positions.count, GraphProjection.nodeBudget)
+        XCTAssertEqual(first.positions[id], original)
+        let moved = SpatialPoint(x: -400, y: 250); try await engine.move(id, to: moved)
+        let reopened = KnowledgeGraphEngine(base: root)
+        let loaded = try await reopened.prepare(request: request, library: library, subjects: [], relationships: [], legacyPositions: [:])
+        XCTAssertEqual(loaded.positions[id], moved)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("workspace.json").path))
+    }
+    func testCancelledPreparationDoesNotBuildOrWriteAndNextRequestWorks() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let engine = KnowledgeGraphEngine(base: root), library = fixture()
+        let request = GraphRequest(revision: GraphRevision(library: UUID(), workspace: UUID()), query: GraphQuery())
+        let worker = Task { try await engine.prepare(request: request, library: library, subjects: [], relationships: [], legacyPositions: [:]) }
+        worker.cancel()
+        do { _ = try await worker.value; XCTFail("Cancelled preparation succeeded") } catch is CancellationError {} catch { XCTFail("Unexpected error") }
+        let builds = await engine.buildCount; XCTAssertEqual(builds, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+        let next = try await engine.prepare(request: request, library: library, subjects: [], relationships: [], legacyPositions: [:])
+        XCTAssertEqual(next.projection.nodes.count, GraphProjection.nodeBudget)
+    }
+    func testCheckpointAndOpenHistoryDoNotInvalidateGraphButRelationshipsDo() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = WorkspaceStore(base: root), initial = workspace.graphRevision
+        XCTAssertTrue(workspace.change { $0.lastScan = ScanJob(sources: []) })
+        XCTAssertTrue(workspace.change { $0.openedFiles = [UUID(): Date()] })
+        XCTAssertEqual(workspace.graphRevision, initial)
+        XCTAssertTrue(workspace.change { $0.link(UUID(), UUID(), label: "Related") })
+        XCTAssertNotEqual(workspace.graphRevision, initial)
+    }
+}

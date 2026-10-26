@@ -31,6 +31,7 @@ struct WorkspaceView: View {
     @Environment(\.accessibilityReduceMotion) private var reducedMotion
     @AppStorage("cinematicMotion") private var cinematicMotion = true
     @State private var showingNotesImport = false
+    @StateObject private var graphModel = KnowledgeMapModel()
     @State private var section: Section? = .overview
     @State private var columns: NavigationSplitViewVisibility = .all
     @State private var showInspector = false
@@ -104,7 +105,7 @@ struct WorkspaceView: View {
         case .notes:
             NotesWorkspace(query: query, select: inspect, addNotes: { showingNotesImport = true })
         case .graph:
-            KnowledgeMap(selectedID: $selectedID, select: inspect)
+            KnowledgeMap(model: graphModel, selectedID: $selectedID, select: inspect)
         case .files, .media, .collections:
             libraryContent
         default:

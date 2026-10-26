@@ -1,21 +1,15 @@
 import SwiftUI
 import VaultCore
 
-private enum NodeKind: String { case document, subject, collection }
-private struct KnowledgeNode: Identifiable {
-    let id: UUID
-    let title: String
-    let subtitle: String
-    let symbol: String
-    let kind: NodeKind
-    let favorite: Bool
+private extension GraphNode {
     var color: Color { kind == .subject ? VaultStyle.teal : kind == .collection ? VaultStyle.amber : VaultStyle.lavender }
-}
-private struct KnowledgeEdge: Identifiable {
-    let id: String
-    let source: UUID
-    let target: UUID
-    let membership: Bool
+    var symbol: String {
+        switch kind {
+        case .subject: "sparkle"
+        case .collection: "square.stack"
+        case .document: isNote ? "note.text" : VaultStyle.fileSymbol(type)
+        }
+    }
 }
 
 struct KnowledgeMap: View {
@@ -25,9 +19,12 @@ struct KnowledgeMap: View {
     @AppStorage("cinematicMotion") private var cinematicMotion = true
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.scenePhase) private var scenePhase
+    @ObservedObject var model: KnowledgeMapModel
     @Binding var selectedID: UUID?
     let select: (UUID) -> Void
-    @State private var loaded = false
+    @State private var page = 0
+    @State private var retryID = UUID()
+    @State private var relatedSearch = ""
     @State private var query = ""
     @State private var camera = GraphCamera()
     @State private var panStart: SpatialPoint?
@@ -47,43 +44,19 @@ struct KnowledgeMap: View {
     @State private var pulseStarted = Date()
     @State private var pulseTask: Task<Void, Never>?
 
-    private var allNodes: [KnowledgeNode] {
-        let subjects = workspace.data.subjects.map { KnowledgeNode(id: $0.id, title: $0.name, subtitle: "SUBJECT · \($0.fileIDs.count) FILES", symbol: "sparkle", kind: .subject, favorite: false) }
-        let collections = store.library.collections.map { collection in KnowledgeNode(id: collection.id, title: collection.name, subtitle: "COLLECTION", symbol: "square.stack", kind: .collection, favorite: false) }
-        let files = store.library.files.map { file in KnowledgeNode(id: file.id, title: file.filename, subtitle: file.noteSource == nil ? file.type.uppercased() : "APPLE NOTE", symbol: file.noteSource == nil ? VaultStyle.fileSymbol(file.type) : "note.text", kind: .document, favorite: file.favorite) }
-        return subjects + collections + files
+    private var request: GraphRequest {
+        var query = GraphQuery()
+        query.text = self.query; query.selectedID = selectedID
+        query.subjects = showSubjects; query.collections = showCollections; query.membership = showMembership
+        query.focus = focusMode; query.page = page
+        return GraphRequest(revision: GraphRevision(library: store.graphRevision, workspace: workspace.graphRevision), query: query)
     }
-    private var selectedNodeID: UUID? {
-        allNodes.contains(where: { $0.id == selectedID }) ? selectedID : nil
-    }
-    private var edges: [KnowledgeEdge] {
-        var result = workspace.data.relationships.map { KnowledgeEdge(id: $0.id.uuidString, source: $0.source, target: $0.target, membership: false) }
-        if showMembership {
-            for subject in workspace.data.subjects {
-                result += subject.fileIDs.map { KnowledgeEdge(id: "\(subject.id)-\($0)", source: subject.id, target: $0, membership: true) }
-            }
-            for file in store.library.files {
-                result += file.collectionIDs.map { KnowledgeEdge(id: "\(file.id)-\($0)", source: file.id, target: $0, membership: true) }
-            }
-        }
-        return result
-    }
+    private var selectedNodeID: UUID? { model.projection.selectedExists ? selectedID : nil }
+    private var nodes: [GraphNode] { model.projection.nodes }
+    private var edges: [GraphEdge] { model.projection.edges }
     private func neighbors(_ id: UUID?) -> Set<UUID> {
         guard let id else { return [] }
-        return Set(edges.filter { $0.source == id || $0.target == id }.flatMap { [$0.source, $0.target] })
-    }
-    private var nodes: [KnowledgeNode] {
-        let related = neighbors(selectedNodeID).union(selectedNodeID.map { [$0] } ?? [])
-        let filtered = allNodes.filter { node in
-            (node.kind != .subject || showSubjects) && (node.kind != .collection || showCollections) &&
-            (query.isEmpty || node.title.localizedCaseInsensitiveContains(query)) && (!focusMode || related.contains(node.id))
-        }
-        // Selected node and its connections get priority before applying the rendering budget.
-        return Array(filtered.sorted { a, b in
-            let aPriority = a.id == selectedID ? 0 : related.contains(a.id) ? 1 : 2
-            let bPriority = b.id == selectedID ? 0 : related.contains(b.id) ? 1 : 2
-            return aPriority == bPriority ? a.id.uuidString < b.id.uuidString : aPriority < bPriority
-        }.prefix(150))
+        return Set(edges.lazy.filter { $0.source == id || $0.target == id }.flatMap { [$0.source, $0.target] })
     }
     var body: some View {
         VStack(spacing: 0) {
@@ -95,6 +68,8 @@ struct KnowledgeMap: View {
                 } description: { Text("Add files, link them to subjects, and build your own constellation of ideas.") } actions: {
                     Button("Add Files…", action: store.chooseFiles)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity).background { ObservatoryBackground() }
+            } else if !model.ready {
+                firstLoad
             } else if organizedList {
                 List(nodes) { node in
                     Button { activate(node.id) } label: {
@@ -112,14 +87,20 @@ struct KnowledgeMap: View {
             Divider().opacity(0.5)
             footer.padding(.horizontal, 20).padding(.vertical, 10)
         }
-        .onAppear { positions = workspace.data.graphPositions ?? [:]; loaded = true; fit() }
-        .onChange(of: nodes.map(\.id)) { _, _ in seed() }
+        .task(id: request) { await prepare() }
+        .task(id: retryID) { if model.error != nil { await prepare() } }
+        .onAppear { applyProjection() }
+        .onChange(of: model.generation) { _, _ in applyProjection() }
+        .onChange(of: query) { _, _ in page = 0 }
+        .onChange(of: showSubjects) { _, _ in page = 0 }
+        .onChange(of: showCollections) { _, _ in page = 0 }
+        .onChange(of: showMembership) { _, _ in page = 0 }
+        .onChange(of: focusMode) { _, _ in page = 0 }
         .onChange(of: selectedID) { _, _ in
             pulseTask?.cancel()
-            guard selectedNodeID != nil else { pulse = false; focusMode = false; return }
+            guard selectedID != nil else { pulse = false; focusMode = false; return }
             pulseStarted = .now; pulse = !reducedMotion && cinematicMotion
             pulseTask = Task { try? await Task.sleep(for: .seconds(1.8)); if !Task.isCancelled { pulse = false } }
-            if focusMode { fit() }
         }
         .onChange(of: cinematicMotion) { _, enabled in if !enabled { pulseTask?.cancel(); pulse = false } }
         .onDisappear { pulseTask?.cancel() }
@@ -137,9 +118,9 @@ struct KnowledgeMap: View {
     }
     private var modeControls: some View {
         HStack(spacing: 6) {
-            Button { focusMode = false; query = ""; fit() } label: { Label("Overview", systemImage: "arrow.up.left.and.arrow.down.right") }.help("Fit the visible network")
+            Button { focusMode = false; query = ""; page = 0; fit() } label: { Label("Overview", systemImage: "arrow.up.left.and.arrow.down.right") }.help("Fit the visible network")
             Toggle(isOn: $focusMode) { Label("Focus", systemImage: "scope") }.toggleStyle(.button).disabled(selectedNodeID == nil)
-                .onChange(of: focusMode) { _, _ in fit() }
+
         }.controlSize(.small)
     }
     private var filters: some View {
@@ -190,17 +171,17 @@ struct KnowledgeMap: View {
                             .scaleEffect(selectedID == node.id || hoveredID == node.id ? max(0.85, min(camera.zoom, 1.15)) : max(0.4, min(camera.zoom, 1.15)))
                             .position(screen(point))
                             .onHover { hoveredID = $0 ? node.id : nil }
-                            .onTapGesture(count: 2) { activate(node.id); if let file = store.library.files.first(where: { $0.id == node.id }) { store.open(file) } }
+                            .onTapGesture(count: 2) { activate(node.id); performFileAction(node.id, action: store.open) }
                             .onTapGesture(count: 1) { activate(node.id) }
                             .gesture(DragGesture(minimumDistance: 5, coordinateSpace: .named("spatialScene")).onChanged { value in
                                 positions[node.id] = camera.world(SpatialPoint(x: value.location.x, y: value.location.y), width: viewport.width, height: viewport.height)
-                            }.onEnded { _ in savePositions() })
+                            }.onEnded { _ in if let point = positions[node.id] { model.move(node.id, to: point) } })
                             .contextMenu { nodeActions(node) }
                             .focusable()
                             .onKeyPress(.return) { activate(node.id); return .handled }
                             .onKeyPress(.space) { activate(node.id); focusMode = true; fit(); return .handled }
                             .accessibilityElement(children: .ignore)
-                            .accessibilityLabel("\(node.title), \(node.kind.rawValue)")
+                            .accessibilityLabel("\(node.title), \(String(describing: node.kind))")
                             .accessibilityValue(selectedID == node.id ? "Selected" : "")
                             .accessibilityAddTraits(.isButton)
                             .accessibilityAction { activate(node.id) }
@@ -215,7 +196,7 @@ struct KnowledgeMap: View {
                 if zoomStart == nil { zoomStart = camera.zoom }
                 camera.setZoom((zoomStart ?? 1) * value.magnification)
             }.onEnded { _ in zoomStart = nil })
-            .onAppear { viewport = geometry.size; if loaded { fit() } }
+            .onAppear { viewport = geometry.size; fit() }
             .onChange(of: geometry.size) { _, size in viewport = size }
         }
     }
@@ -229,10 +210,41 @@ struct KnowledgeMap: View {
         }.buttonStyle(.plain).padding(12).quietPanel()
     }
     private var footer: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 18) { legend; Spacer(); Text("\(nodes.count) visible · \(allNodes.count) total").font(.caption2).foregroundStyle(.secondary); Text(focusMode ? "FOCUS" : "FREE EXPLORE").font(.system(size: 9, weight: .medium)).tracking(1).foregroundStyle(VaultStyle.teal) }
-            HStack { legend; Spacer(); Text("\(nodes.count) / \(allNodes.count)").font(.caption2) }
-        }.help("Up to 150 matching nodes are rendered. Search or Focus narrows the network. Drag to pan; pinch to zoom.")
+        VStack(alignment: .leading, spacing: 8) {
+            if let error = model.error {
+                HStack {
+                    Text(error).font(.caption).foregroundStyle(VaultStyle.amber)
+                    Button("Reload Map") { model.retry(); retryID = UUID() }
+                }
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 14) { legend; Spacer(); pageControls; summary }
+                HStack { pageControls; Spacer(); summary }
+            }
+        }.help("Only the current page's nodes and up to 900 connections are rendered. Search covers the entire library; use Focus or page controls to explore more. This does not limit scanning or indexing.")
+    }
+    private var pageControls: some View {
+        HStack(spacing: 9) {
+            Button { page = max(0, model.projection.page - 1) } label: { Image(systemName: "chevron.left") }
+                .disabled(model.loading || model.projection.page == 0).help("Previous map page").accessibilityLabel("Previous map page")
+            Text("\(model.projection.page + 1) / \(model.projection.pageCount)").font(.caption2.monospacedDigit())
+            Button { page = model.projection.page + 1 } label: { Image(systemName: "chevron.right") }
+                .disabled(model.loading || model.projection.page + 1 >= model.projection.pageCount).help("Next map page").accessibilityLabel("Next map page")
+        }.controlSize(.mini)
+    }
+    private var summary: some View {
+        HStack(spacing: 7) {
+            if model.loading { ProgressView().controlSize(.mini) }
+            Text("\(nodes.count) visible · \(model.projection.matching) matching · \(model.projection.total) total").font(.caption2).foregroundStyle(.secondary)
+            if model.projection.edgesTruncated { Text("Connection detail limited").font(.caption2).foregroundStyle(.secondary) }
+        }
+    }
+    private var firstLoad: some View {
+        VStack(spacing: 14) {
+            if model.error == nil { ProgressView() }
+            Text(model.error == nil ? "Preparing your map…" : "Map unavailable").font(.headline)
+            Text("Building a local connection index in the background. Your full library stays available.").font(.callout).foregroundStyle(.secondary)
+        }.frame(maxWidth: .infinity, maxHeight: .infinity).background { ObservatoryBackground(grid: false) }
     }
     private var legend: some View {
         HStack(spacing: 12) {
@@ -241,40 +253,52 @@ struct KnowledgeMap: View {
             Label("Collections", systemImage: "square.stack").foregroundStyle(VaultStyle.amber)
         }.font(.system(size: 10))
     }
-    @ViewBuilder private func nodeActions(_ node: KnowledgeNode) -> some View {
-        Button("Focus Connections") { activate(node.id); focusMode = true; fit() }
-        Button("Expand to Overview") { focusMode = false; query = ""; fit() }
-        if let file = store.library.files.first(where: { $0.id == node.id }) {
-            Divider(); Button("Open in Default App") { store.open(file) }
-            Button("Reveal in Finder") { store.reveal(file) }
-            Button("Create Relationship…") { activate(node.id); linkTarget = nil; linking = true }
-            Button(file.favorite ? "Remove Favorite" : "Favorite") { var next = file; next.favorite.toggle(); store.update(next) }
+    @ViewBuilder private func nodeActions(_ node: GraphNode) -> some View {
+        Button("Focus Connections") { activate(node.id); focusMode = true; page = 0 }
+        Button("Expand to Overview") { focusMode = false; query = ""; page = 0 }
+        if node.kind == .document {
+            Divider()
+            // Do not search/copy FileItem values while SwiftUI constructs every node's menu.
+            Button("Open in Default App") { performFileAction(node.id, action: store.open) }
+            Button("Reveal in Finder") { performFileAction(node.id, action: store.reveal) }
+            Button("Create Relationship…") { activate(node.id); linkTarget = nil; relatedSearch = ""; linking = true }
+            Button(node.favorite ? "Remove Favorite" : "Favorite") {
+                performFileAction(node.id) { file in var next = file; next.favorite.toggle(); store.update(next) }
+            }
         }
     }
     private var relationshipEditor: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Connect documents").font(.title3.bold())
-            Text(allNodes.first { $0.id == selectedID }?.title ?? "Selected file").foregroundStyle(.secondary)
+            Text(nodes.first { $0.id == selectedID }?.title ?? "Selected file").foregroundStyle(.secondary)
+            TextField("Search all documents…", text: $relatedSearch).onChange(of: relatedSearch) { _, _ in linkTarget = nil }
             Picker("Related file", selection: $linkTarget) {
                 Text("Choose a document").tag(nil as UUID?)
-                ForEach(store.library.files.filter { $0.id != selectedID }) { Text($0.filename).tag(Optional($0.id)) }
+                ForEach(relationshipCandidates) { Text($0.filename).tag(Optional($0.id)) }
             }
-            Text("This relationship stays in Vault. Neither file is moved or modified.").font(.caption).foregroundStyle(.secondary)
+            Text("Showing up to 50 matching documents. Search to narrow the choices. This relationship stays in Vault; neither file is moved or modified.").font(.caption).foregroundStyle(.secondary)
             HStack { Button("Cancel") { linking = false }; Spacer(); Button("Create Connection") {
                 if let selectedID, let linkTarget { workspace.change { $0.link(selectedID, linkTarget, label: "Related") } }
                 linking = false
             }.disabled(linkTarget == nil || selectedID == nil) }
         }.padding(24).frame(width: 440)
     }
-    private func activate(_ id: UUID) { selectedID = id; select(id) }
-    private func seed() {
-        guard loaded else { return }
-        let next = SpatialLayout.extending(positions, ids: nodes.map(\.id))
-        if next != positions { positions = next; savePositions() }
+    private var relationshipCandidates: [FileItem] {
+        Array(store.library.files.lazy.filter { $0.id != selectedID && (relatedSearch.isEmpty || $0.filename.localizedCaseInsensitiveContains(relatedSearch)) }.prefix(50))
     }
-    private func savePositions() { workspace.change { $0.graphPositions = positions } }
+    private func performFileAction(_ id: UUID, action: (FileItem) -> Void) {
+        if let file = store.library.files.first(where: { $0.id == id }) { action(file) }
+    }
+    private func activate(_ id: UUID) { selectedID = id; select(id) }
+    private func prepare() async {
+        await model.load(request, library: store.library, subjects: workspace.data.subjects, relationships: workspace.data.relationships, legacyPositions: workspace.data.graphPositions ?? [:])
+    }
+    private func applyProjection() {
+        let changedNodes = Set(positions.keys) != Set(model.positions.keys)
+        positions = model.positions
+        if changedNodes { fit() }
+    }
     private func fit() {
-        seed()
         camera.fit(nodes.compactMap { positions[$0.id] }, width: viewport.width, height: viewport.height)
     }
     private func screen(_ point: SpatialPoint) -> CGPoint {
