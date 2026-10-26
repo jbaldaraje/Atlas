@@ -10,22 +10,34 @@ final class WorkspaceStore: ObservableObject {
     private let recovery = RecoveryService()
     @Published var working = false
     @Published var report: StorageReport?
-    @Published var folderCandidates: [ImportCandidate] = []
-    @Published var pendingLocation: ScanLocation?
+    @Published var pendingLocations: [ScanLocation] = []
     @Published var reviewFolder = false
     @Published var scanCategories: Set<ScanFileCategory> = ScanFileCategory.all
-    var matchingFolderCandidates: [ImportCandidate] {
-        folderCandidates.filter { scanCategories.contains($0.category) }
-    }
-    private let url = URL.applicationSupportDirectory.appendingPathComponent("Vault/workspace.json")
+    @Published var scanExtractText = false
+    @Published var scanIncludeGPS = false
+    @Published var scanMonitorFolders = true
+    @Published var scanPresentation: ScanPresentation = .configuration
+    @Published var activeScan: ScanJob?
+    @Published var scanCurrentFile = ""
+    var scanIsActive: Bool { activeScan?.stage.isRunning == true && working }
+    let organizer = SmartOrganizationService()
+    let scanAnalyzer = AnalysisService()
+    var scanTask: Task<Void, Never>?
+    var scanSourceID: UUID?
+    private let url: URL
     private let analyzer = AnalysisService()
     private let extractor = ContentService()
     private var task: Task<Void, Never>?
     private var monitoring: Task<Void, Never>?
     private var writable = true
-    init() {
+    init(base: URL = URL.applicationSupportDirectory.appendingPathComponent("Vault", isDirectory: true)) {
+        url = base.appendingPathComponent("workspace.json")
         do {
             if FileManager.default.fileExists(atPath: url.path) { data = try JSONDecoder().decode(Workspace.self, from: Data(contentsOf: url)) }
+            if var interrupted = data.lastScan, interrupted.stage.isRunning {
+                interrupted.stage = .interrupted
+                change { $0.lastScan = interrupted }
+            }
         } catch { writable = false; self.error = "Workspace data could not be read. Writes are disabled; restore a valid workspace.json before restarting." }
     }
     @discardableResult func change(_ body: (inout Workspace) -> Void) -> Bool {
@@ -55,19 +67,32 @@ final class WorkspaceStore: ObservableObject {
     }
     func approveFolder() {
         guard !working else { return }
-        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false
-        panel.message = "Select one folder. Vault will preview regular files and let you select file categories before indexing. Hidden files, packages, and symbolic links are excluded. Monitoring polls every 30 seconds while Vault is running."
-        guard panel.runModal() == .OK, let folder = panel.url else { return }
-        working = true
-        task = Task {
-            defer { working = false }
-            do {
+        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = true
+        panel.message = "Select the folders to scan. Next, choose file types and review options before Start Scan. Originals stay in place."
+        guard panel.runModal() == .OK else { return }
+        do {
+            pendingLocations = try panel.urls.map { folder in
+                let access = folder.startAccessingSecurityScopedResource()
+                defer { if access { folder.stopAccessingSecurityScopedResource() } }
                 let bookmark = try folder.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
-                let candidates = try await FileAccessService.scanFolder(bookmark, excludes: [])
-                scanCategories = ScanFileCategory.all
-                folderCandidates = candidates; pendingLocation = ScanLocation(name: folder.lastPathComponent, bookmark: bookmark); reviewFolder = true
-            } catch { self.error = error.localizedDescription }
-        }
+                let identity = FileAccessService.identity(at: folder)
+                var location = data.locations.first { matchesSource($0, folder: folder, identity: identity) } ?? ScanLocation(name: folder.lastPathComponent, bookmark: bookmark)
+                location.name = folder.lastPathComponent; location.bookmark = bookmark; location.sourcePath = folder.standardizedFileURL.path; location.sourceIdentity = identity
+                return location
+            }
+            scanCategories = pendingLocations.reduce(into: Set<ScanFileCategory>()) { $0.formUnion($1.fileCategories) }
+            scanExtractText = pendingLocations.allSatisfy(\.extractContent)
+            scanIncludeGPS = pendingLocations.allSatisfy { $0.includePhotoLocations == true }
+            scanMonitorFolders = pendingLocations.contains { source in !data.locations.contains { $0.id == source.id } }
+            scanPresentation = .configuration; reviewFolder = true
+        } catch { self.error = "Folder access could not be saved. Select the folders again." }
+    }
+    private func matchesSource(_ source: ScanLocation, folder: URL, identity: String?) -> Bool {
+        if let identity, source.sourceIdentity == identity { return true }
+        if source.sourcePath == folder.standardizedFileURL.path { return true }
+        var stale = false
+        guard let existing = try? URL(resolvingBookmarkData: source.bookmark, options: [.withSecurityScope, .withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale) else { return false }
+        return existing.standardizedFileURL == folder.standardizedFileURL
     }
     func startMonitoring(library: LibraryStore) {
         guard monitoring == nil else { return }
@@ -76,27 +101,32 @@ final class WorkspaceStore: ObservableObject {
                 try? await Task.sleep(for: .seconds(30))
                 guard let self, let library, !Task.isCancelled else { return }
                 if library.busy || self.working { continue }
+                self.working = true
                 for location in self.data.locations where !location.paused {
                     do {
                         let entries = try await FileAccessService.scanFolder(location.bookmark, excludes: location.excludes, categories: location.fileCategories)
                         guard self.data.locations.contains(where: { $0.id == location.id && !$0.paused && $0.excludes == location.excludes && $0.fileCategories == location.fileCategories }) else { continue }
-                        await library.synchronize(entries, folderBookmark: location.bookmark)
+                        let synced = await library.synchronize(entries, folderBookmark: location.bookmark)
+                        if !synced.errors.isEmpty { self.error = synced.errors.joined(separator: "\n") }
+                        var facts: [OrganizationFacts] = []
+                        var texts: [UUID: String] = [:]
+                        for file in library.library.files where synced.merge.fileIDs.contains(file.id) {
+                            guard self.data.locations.contains(where: { $0.id == location.id && !$0.paused && $0.extractContent == location.extractContent && $0.includePhotoLocations == location.includePhotoLocations }) else { break }
+                            if self.needsOrganization(file, source: location) {
+                                let result = try await self.organizer.facts(for: file, source: location, existingSubjects: self.data.subjects.map(\.name))
+                                facts.append(result.0); if let text = result.1 { texts[file.id] = text }
+                            }
+                        }
+                        self.commitOrganization(facts, texts: texts, library: library)
                     } catch { self.error = "Monitoring \(location.name) failed. Pause, reconnect, or approve the folder again." }
                 }
+                self.working = false
             }
         }
     }
-    func confirmFolder(library: LibraryStore) {
-        guard var location = pendingLocation, !scanCategories.isEmpty else { return }
-        location.includedCategories = scanCategories
-        guard change({ $0.locations.append(location) }) else { return }
-        let candidates = matchingFolderCandidates
-        cancelFolderReview()
-        Task { await library.synchronize(candidates, folderBookmark: location.bookmark) }
-    }
     func cancelFolderReview() {
-        reviewFolder = false; pendingLocation = nil; folderCandidates = []
-        scanCategories = ScanFileCategory.all
+        guard !scanIsActive else { return }
+        reviewFolder = false; pendingLocations = []; scanCategories = ScanFileCategory.all
     }
     @discardableResult func updateScanCategories(locationID: UUID, categories: Set<ScanFileCategory>) -> Bool {
         guard !categories.isEmpty else { return false }
@@ -106,6 +136,7 @@ final class WorkspaceStore: ObservableObject {
         return change { workspace in
             guard let index = workspace.locations.firstIndex(where: { $0.id == locationID }) else { return }
             workspace.locations[index].includedCategories = categories
+            workspace.locations[index].categoryVersion = 2
         }
     }
     func refreshRecovery() {

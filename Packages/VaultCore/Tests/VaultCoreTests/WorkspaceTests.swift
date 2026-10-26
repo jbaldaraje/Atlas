@@ -26,11 +26,11 @@ final class WorkspaceTests: XCTestCase {
     }
     func testScanCategoriesSeparatePDFsDocumentsImagesAndMedia() {
         let examples: [(String, ScanFileCategory)] = [
-            ("doc", .documents), ("docx", .documents), ("pptx", .documents),
-            ("xlsx", .documents), ("pages", .documents), ("md", .documents),
+            ("doc", .documents), ("docx", .documents), ("pptx", .presentations),
+            ("xlsx", .data), ("pages", .documents), ("md", .documents),
             ("PDF", .pdf), (".pdf", .pdf), ("jpg", .images), ("HEIC", .images),
             ("png", .images), ("mp4", .media), ("mov", .media), ("mp3", .media),
-            ("flac", .media), ("zip", .other), ("unknown", .other), ("", .other)
+            ("flac", .media), ("zip", .archives), ("unknown", .other), ("", .other)
         ]
         for (fileExtension, expected) in examples {
             XCTAssertEqual(ScanFileCategory.classify(fileExtension: fileExtension), expected, fileExtension)
@@ -47,6 +47,7 @@ final class WorkspaceTests: XCTestCase {
     func testScanCategorySelectionsSurvivePersistenceIncludingExplicitNone() throws {
         var location = ScanLocation(name: "Study", bookmark: Data([1]))
         location.includedCategories = [.documents, .pdf]
+        location.categoryVersion = 2
         var decoded = try JSONDecoder().decode(ScanLocation.self, from: JSONEncoder().encode(location))
         XCTAssertEqual(decoded.fileCategories, [.documents, .pdf])
         XCTAssertFalse(decoded.fileCategories.contains(.images))

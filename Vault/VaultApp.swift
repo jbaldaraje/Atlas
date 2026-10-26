@@ -16,7 +16,7 @@ struct VaultApp: App {
         .defaultSize(width: 1400, height: 900)
         .commands {
             CommandGroup(after: .newItem) {
-                Button("Add Files…") { store.chooseFiles() }.keyboardShortcut("i", modifiers: [.command])
+                Button("Add Files…") { store.chooseFiles() }.keyboardShortcut("i", modifiers: [.command]).disabled(store.busy || store.loadFailed || workspace.working)
             }
         }
         Settings { PreferencesView().padding(28).frame(width: 440).preferredColorScheme(appearance == "system" ? nil : appearance == "dark" ? .dark : .light) }

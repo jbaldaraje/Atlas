@@ -15,6 +15,7 @@ public struct FileItem: Identifiable, Codable, Equatable, Sendable {
     public var description: String
     public var tags: [String]
     public var collectionIDs: Set<UUID>
+    public var fileIdentity: String? = nil
     public var favorite: Bool
     public init(id: UUID = UUID(), filename: String, type: String, bookmark: Data, originalLocation: String, ownership: StorageOwnership, size: Int64, createdAt: Date? = nil, modifiedAt: Date? = nil, indexedAt: Date = .now, description: String = "", tags: [String] = [], collectionIDs: Set<UUID> = [], favorite: Bool = false) {
         self.id = id; self.filename = filename; self.type = type; self.bookmark = bookmark
@@ -26,6 +27,7 @@ public struct FileItem: Identifiable, Codable, Equatable, Sendable {
 public struct FileCollection: Identifiable, Codable, Equatable, Sendable {
     public var id: UUID
     public var name: String
+    public var organizationKey: String? = nil
     public init(id: UUID = UUID(), name: String) { self.id = id; self.name = name }
 }
 public struct Library: Codable, Equatable, Sendable {
@@ -40,6 +42,35 @@ public struct Library: Codable, Equatable, Sendable {
                 ([file.filename, file.description] + file.tags).contains { $0.localizedCaseInsensitiveContains(word) }
             }
         }
+    }
+    public mutating func mergeScanned(_ incoming: [FileItem]) -> CatalogMerge {
+        var result = CatalogMerge()
+        var paths: [String: Int] = [:], identities: [String: Int] = [:]
+        for (index, file) in files.enumerated() {
+            paths[file.originalLocation] = index
+            if let identity = file.fileIdentity { identities[identity] = index }
+        }
+        for fresh in incoming {
+            let index = fresh.fileIdentity.flatMap { identities[$0] } ?? paths[fresh.originalLocation]
+            if let index {
+                var old = files[index]
+                let changed = old.size != fresh.size || old.modifiedAt != fresh.modifiedAt || old.originalLocation != fresh.originalLocation
+                old.filename = fresh.filename; old.type = fresh.type; old.bookmark = fresh.bookmark
+                old.size = fresh.size; old.createdAt = fresh.createdAt; old.modifiedAt = fresh.modifiedAt
+                old.originalLocation = fresh.originalLocation; old.fileIdentity = fresh.fileIdentity
+                files[index] = old
+                result.fileIDs.insert(old.id)
+                if changed { result.updated.insert(old.id) } else { result.unchanged += 1 }
+                paths[fresh.originalLocation] = index
+                if let identity = fresh.fileIdentity { identities[identity] = index }
+            } else {
+                let index = files.count; files.append(fresh)
+                paths[fresh.originalLocation] = index
+                if let identity = fresh.fileIdentity { identities[identity] = index }
+                result.fileIDs.insert(fresh.id); result.added.insert(fresh.id)
+            }
+        }
+        return result
     }
     public mutating func removeFromIndex(_ id: UUID) { files.removeAll { $0.id == id } }
     public mutating func removeCollection(_ id: UUID) {
@@ -63,4 +94,12 @@ public struct LibraryRepository: Sendable {
         try JSONEncoder().encode(library).write(to: url, options: .atomic)
     }
     public enum RepositoryError: Error { case unsupportedSchema }
+}
+
+public struct CatalogMerge: Sendable {
+    public var fileIDs: Set<UUID> = []
+    public var added: Set<UUID> = []
+    public var updated: Set<UUID> = []
+    public var unchanged = 0
+    public init() {}
 }

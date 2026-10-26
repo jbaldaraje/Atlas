@@ -79,9 +79,6 @@ struct MonitoringWorkspace: View {
                 .font(.caption).foregroundStyle(.secondary)
             ForEach(workspace.data.locations) { location in locationRow(location) }
         }
-        .sheet(isPresented: $workspace.reviewFolder, onDismiss: workspace.cancelFolderReview) {
-            FolderScanReview()
-        }
         .sheet(item: $editingLocation) { location in
             LocationScanCategoryEditor(location: location)
         }
@@ -133,7 +130,7 @@ struct MonitoringWorkspace: View {
     }
 }
 
-private struct ScanCategoryPicker: View {
+struct ScanCategoryPicker: View {
     @Binding var selection: Set<ScanFileCategory>
     var counts: [ScanFileCategory: Int]? = nil
     var body: some View {
@@ -141,6 +138,12 @@ private struct ScanCategoryPicker: View {
             HStack {
                 Text("File types to include").font(.headline)
                 Spacer()
+                Menu(presetName) {
+                    Button("All Supported Files") { selection = ScanFileCategory.all }
+                    Button("Documents") { selection = [.documents, .pdf, .presentations, .data] }
+                    Button("Photos & Media") { selection = [.images, .media] }
+                    Text("Custom Selection: use the category checkboxes below")
+                }.fixedSize()
                 Button("All Types") { selection = ScanFileCategory.all }
                 Button("None") { selection = [] }
             }
@@ -154,57 +157,20 @@ private struct ScanCategoryPicker: View {
                     }.toggleStyle(.checkbox).help(category.detail)
                 }
             }
-            Text("Documents excludes PDFs. Media includes audio and video. Other includes archives and unrecognized types.")
+            Text("PDFs, presentations, data, and archives can be selected separately. Media includes audio and video. Unrecognized types use Other.")
                 .font(.caption).foregroundStyle(.secondary)
         }
+    }
+    private var presetName: String {
+        if selection == ScanFileCategory.all { return "All Supported Files" }
+        if selection == Set([ScanFileCategory.documents, .pdf, .presentations, .data]) { return "Documents" }
+        if selection == Set([ScanFileCategory.images, .media]) { return "Photos & Media" }
+        return "Custom Selection"
     }
     private func inclusionBinding(_ category: ScanFileCategory) -> Binding<Bool> {
         Binding(get: { selection.contains(category) }, set: { included in
             if included { selection.insert(category) } else { selection.remove(category) }
         })
-    }
-}
-
-private struct FolderScanReview: View {
-    @EnvironmentObject private var store: LibraryStore
-    @EnvironmentObject private var workspace: WorkspaceStore
-    private var matches: [ImportCandidate] { workspace.matchingFolderCandidates }
-    private var counts: [ScanFileCategory: Int] {
-        Dictionary(grouping: workspace.folderCandidates, by: \.category).mapValues { $0.count }
-    }
-    private var totalBytes: Int64 { matches.reduce(0) { $0 + $1.size } }
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Index and monitor \(workspace.pendingLocation?.name ?? "folder")?").font(.title2)
-            ScanCategoryPicker(selection: $workspace.scanCategories, counts: counts)
-            Text("\(matches.count) of \(workspace.folderCandidates.count) files selected · \(ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file))")
-                .font(.headline)
-            preview
-            Text("Only matching file types will be indexed now and on future scans. Originals stay in place, and no content is extracted automatically. Review sensitive file names and locations before approving. Preview support varies by format.")
-                .font(.caption).foregroundStyle(.secondary)
-            HStack {
-                Button("Cancel", role: .cancel) { workspace.cancelFolderReview() }
-                Spacer()
-                Button("Index and Monitor") { workspace.confirmFolder(library: store) }
-                    .disabled(workspace.scanCategories.isEmpty || store.busy)
-            }
-        }.padding(24).frame(width: 650)
-    }
-    @ViewBuilder private var preview: some View {
-        if workspace.scanCategories.isEmpty {
-            ContentUnavailableView("Choose at least one file type", systemImage: "line.3.horizontal.decrease.circle")
-                .frame(height: 230)
-        } else if matches.isEmpty {
-            ContentUnavailableView("No matching files yet", systemImage: "doc.text.magnifyingglass", description: Text("You can still monitor this folder for new files of the selected types."))
-                .frame(height: 230)
-        } else {
-            List(matches) { entry in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack { Text(entry.url.lastPathComponent); Spacer(); Text(entry.category.title).font(.caption).foregroundStyle(.secondary) }
-                    Text(entry.url.path).font(.caption).foregroundStyle(.secondary)
-                }
-            }.frame(height: 230)
-        }
     }
 }
 

@@ -13,6 +13,12 @@ struct ImportCandidate: Identifiable {
         self.category = category ?? ScanFileCategory.classify(fileExtension: type.isEmpty ? url.pathExtension : type)
     }
 }
+struct FolderDiscovery {
+    var candidates: [ImportCandidate] = []
+    var discovered = 0
+    var skipped = 0
+    var errors: [String] = []
+}
 struct ImportReport {
     var items: [FileItem] = []
     var failures: [String] = []
@@ -30,44 +36,64 @@ struct FileAccessService: Sendable {
                 defer { if access { url.stopAccessingSecurityScopedResource() } }
                 let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentTypeKey])
                 guard values.isRegularFile == true, values.isSymbolicLink != true else { throw AccessError.regularFilesOnly }
-                return ImportCandidate(url: url, size: Int64(values.fileSize ?? 0), type: values.contentType?.preferredFilenameExtension ?? url.pathExtension, category: category(for: url, contentType: values.contentType))
+                return candidate(url: url, values: values)
             }
         }
         return try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })
     }
     static func scanFolder(_ bookmark: Data, excludes: [String], categories: Set<ScanFileCategory> = ScanFileCategory.all) async throws -> [ImportCandidate] {
+        try await discoverFolder(bookmark, excludes: excludes, categories: categories).candidates
+    }
+    static func discoverFolder(_ bookmark: Data, excludes: [String], categories: Set<ScanFileCategory>, progress: (@Sendable (Int) -> Void)? = nil) async throws -> FolderDiscovery {
         let worker = Task.detached(priority: .utility) {
             var stale = false
             let folder = try URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale)
-            guard !stale else { throw FileAccessService.AccessError.staleBookmark }
+            guard !stale else { throw AccessError.staleBookmark }
             let access = folder.startAccessingSecurityScopedResource()
             defer { if access { folder.stopAccessingSecurityScopedResource() } }
-            var traversalError: Error?
-            guard let enumerator = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles, .skipsPackageDescendants], errorHandler: { _, error in traversalError = error; return false }) else { throw CocoaError(.fileReadNoPermission) }
-            var urls: [URL] = []
+            var report = FolderDiscovery()
+            guard let enumerator = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles, .skipsPackageDescendants], errorHandler: { url, _ in
+                report.errors.append("Unavailable folder: " + url.lastPathComponent); return true
+            }) else { throw CocoaError(.fileReadNoPermission) }
             for case let url as URL in enumerator {
                 try Task.checkCancellation()
                 let relative = String(url.path.dropFirst(folder.path.count + 1))
                 if excludes.contains(where: { relative == $0 || relative.hasPrefix($0 + "/") }) { enumerator.skipDescendants(); continue }
-                let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-                if values.isSymbolicLink == true { enumerator.skipDescendants(); continue }
-                if values.isRegularFile == true { urls.append(url) }
-                guard urls.count <= 10_000 else { throw ScanError.tooManyFiles }
+                do {
+                    let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentTypeKey])
+                    if values.isSymbolicLink == true { enumerator.skipDescendants(); continue }
+                    guard values.isRegularFile == true else { continue }
+                    report.discovered += 1
+                    guard report.discovered <= 10_000 else { throw ScanError.tooManyFiles }
+                    let item = candidate(url: url, values: values)
+                    if categories.contains(item.category) { report.candidates.append(item) } else { report.skipped += 1 }
+                    if report.discovered.isMultiple(of: 50) { progress?(report.discovered) }
+                } catch let error as ScanError { throw error }
+                catch { report.errors.append("Unavailable file: " + url.lastPathComponent) }
             }
-            if let traversalError { throw traversalError }
-            let inspected = try await FileAccessService.inspect(urls)
-            return inspected.filter { categories.contains($0.category) }
+            progress?(report.discovered)
+            return report
         }
         return try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })
     }
-
+    private static func candidate(url: URL, values: URLResourceValues) -> ImportCandidate {
+        ImportCandidate(url: url, size: Int64(values.fileSize ?? 0), type: values.contentType?.preferredFilenameExtension ?? url.pathExtension, category: category(for: url, contentType: values.contentType))
+    }
+    static func identity(at url: URL) -> String? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let device = attributes[.systemNumber] as? NSNumber, let inode = attributes[.systemFileNumber] as? NSNumber else { return nil }
+        return "\(device):\(inode)"
+    }
     private static func category(for url: URL, contentType: UTType?) -> ScanFileCategory {
         let byExtension = ScanFileCategory.classify(fileExtension: url.pathExtension)
         guard byExtension == .other, let contentType else { return byExtension }
         if contentType.conforms(to: .pdf) { return .pdf }
         if contentType.conforms(to: .image) { return .images }
         if contentType.conforms(to: .movie) || contentType.conforms(to: .audio) { return .media }
-        if contentType.conforms(to: .text) || contentType.conforms(to: .presentation) || contentType.conforms(to: .spreadsheet) { return .documents }
+        if contentType.conforms(to: .presentation) { return .presentations }
+        if contentType.conforms(to: .spreadsheet) { return .data }
+        if contentType.conforms(to: .archive) { return .archives }
+        if contentType.conforms(to: .text) { return .documents }
         return .other
     }
     static func run(_ candidates: [ImportCandidate], copy: Bool, managedDirectory: URL, existingPaths: Set<String>, progress: (@Sendable (Int, Int) -> Void)? = nil) async -> ImportReport {
@@ -100,7 +126,9 @@ struct FileAccessService: Sendable {
                     }
                     let values = try destination.resourceValues(forKeys: [.fileSizeKey, .creationDateKey, .contentModificationDateKey])
                     let bookmark = try destination.bookmarkData(options: copy ? [.withSecurityScope] : [.withSecurityScope, .securityScopeAllowOnlyReadAccess], includingResourceValuesForKeys: nil, relativeTo: nil)
-                    report.items.append(FileItem(filename: source.lastPathComponent, type: candidate.type, bookmark: bookmark, originalLocation: destination.standardizedFileURL.path, ownership: copy ? .managedCopy : .original, size: Int64(values.fileSize ?? 0), createdAt: values.creationDate, modifiedAt: values.contentModificationDate))
+                    var file = FileItem(filename: source.lastPathComponent, type: candidate.type, bookmark: bookmark, originalLocation: destination.standardizedFileURL.path, ownership: copy ? .managedCopy : .original, size: Int64(values.fileSize ?? 0), createdAt: values.creationDate, modifiedAt: values.contentModificationDate)
+                    file.fileIdentity = identity(at: destination)
+                    report.items.append(file)
                 } catch {
                     if let ownedURL { try? FileManager.default.removeItem(at: ownedURL) }
                     report.failures.append(source.lastPathComponent)

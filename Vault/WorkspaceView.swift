@@ -123,7 +123,7 @@ struct WorkspaceView: View {
         ToolbarItem(placement: .navigation) { navigationMenu }
         ToolbarItem {
             Button(action: store.chooseFiles) { Label("Add Files", systemImage: "plus") }
-                .disabled(store.busy || store.loadFailed)
+                .disabled(store.busy || store.loadFailed || workspace.working)
         }
         ToolbarItem {
             Button { showInspector.toggle() } label: {
@@ -174,8 +174,14 @@ struct WorkspaceView: View {
             .sheet(isPresented: $store.presentingImport) { ImportReview() }
     }
 
+    private var scanPresentation: some View {
+        sheetPresentations.sheet(isPresented: $workspace.reviewFolder, onDismiss: workspace.cancelFolderReview) {
+            FolderScanReview(select: inspect, openMap: openMap)
+        }
+    }
+
     private var collectionPresentation: some View {
-        sheetPresentations.alert("New collection", isPresented: $newCollection) {
+        scanPresentation.alert("New collection", isPresented: $newCollection) {
             TextField("Collection name", text: $collectionName)
             Button("Create", action: createCollection)
             Button("Cancel", role: .cancel) { collectionName = "" }
@@ -272,6 +278,8 @@ struct WorkspaceView: View {
                 }
             }.listStyle(.sidebar).scrollContentBackground(.hidden)
             VStack(alignment: .leading, spacing: 12) {
+                Button(action: workspace.approveFolder) { Label("Scan Folders", systemImage: "folder.badge.plus").font(.system(size: 12)) }
+                    .buttonStyle(.plain).disabled(workspace.working || store.busy)
                 SettingsLink { Label("Settings", systemImage: "gearshape").font(.system(size: 12)) }.buttonStyle(.plain)
                 Divider().opacity(0.5)
                 Label("Local by design", systemImage: "checkmark.shield").font(.system(size: 10)).foregroundStyle(.secondary)
@@ -315,7 +323,7 @@ struct WorkspaceView: View {
         } description: {
             Text(store.library.files.isEmpty ? "Add a few files to begin. Index them where they are, or keep verified copies in Vault." : "Try another search or change your filters.")
         } actions: {
-            Button("Add Files…", action: store.chooseFiles).disabled(store.busy || store.loadFailed)
+            Button("Add Files…", action: store.chooseFiles).disabled(store.busy || store.loadFailed || workspace.working)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 

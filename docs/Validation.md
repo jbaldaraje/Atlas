@@ -6,14 +6,14 @@ Linux, with no Swift compiler, Xcode, or macOS SDK. **No Swift compilation, XCTe
 
 Static checks passed after the expanded implementation:
 
-- Swift grammar parsing of all **29 Swift files**, using tree-sitter-swift. This does not perform type checking or validate native framework APIs.
+- Swift grammar parsing of all **34 Swift files**, using tree-sitter-swift. This does not perform type checking or validate native framework APIs.
 - OpenStep parsing of `project.pbxproj` and resolution of declared object, product, package, configuration, and build-phase references.
-- Exact membership of all **22 application/integration Swift sources** in project references, including new services and tests.
+- Exact membership of all **25 application/integration Swift sources** in project references, including new services and tests.
 - Shared Xcode scheme XML and entitlement plist parsing.
 - App Sandbox, user-selected read/write capability, and app-scoped bookmark configuration; no network client entitlement. Original index bookmarks explicitly request read-only access.
 - `git diff --check` returned success. All source deliverables are untracked new files in the initially empty, unborn repository, so this is not a tracked-diff review.
 
-Validation parsers were installed from PyPI into `/tmp` and are not app dependencies. The repository's own automated tests are **17 domain/package test methods and 16 macOS integration test methods**; all are currently **unrun**. Syntax parser checks are not substitutes for them.
+Validation parsers were installed from PyPI into `/tmp` and are not app dependencies. The repository's own automated tests are **24 domain/package test methods and 20 macOS integration test methods**; all are currently **unrun**. Syntax parser checks are not substitutes for them.
 
 ## Required next validation
 
@@ -50,3 +50,7 @@ The reported system authentication prompt closing matches a source-level race: t
 Key access now requests the macOS data-protection Keychain for new user-presence-protected keys, with a legacy lookup fallback for existing keys. The app never creates a replacement when ciphertext exists without an accessible key. These native API changes require signed macOS runtime validation.
 
 Six injected-dependency tests were added against SecureStore's actual async unlock flow, without a real Keychain/biometric prompt: authentication focus loss, explicit lock before authentication completes, missing-key ciphertext preservation, wrong-key ciphertext preservation, user cancellation, and inactive-app refusal. Static syntax/project checks pass; the tests and real Touch ID/password fallback remain unrun on this Linux host. On macOS, test first enrollment, existing legacy records, repeated unlocks, the system dialog taking focus, cancellation, switching apps while unlocked, sleep during authentication, and navigation during authentication. Verify no records appear while Vault is inactive.
+
+## Incremental smart scanning and graph organization
+
+See SmartScanning.md for integration, file inventory, limits, and macOS acceptance. Static syntax parsing passes for 34 Swift files; all Xcode references resolve and every app/core source belongs to its native target without duplicate compilation. The existing graph renderer is unchanged. Actual build/test attempts returned exit 127 (`swift: command not found`, `xcodebuild: command not found`). No native tests or application runtime ran. Test sources now total 44 methods: 24 package and 20 native, including real EXIF fixtures and complete catalog/organization/rescan/cancellation tests. These counts describe source methods only, not passing outcomes.

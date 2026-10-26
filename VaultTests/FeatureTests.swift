@@ -1,6 +1,8 @@
 import XCTest
 import CryptoKit
 import LocalAuthentication
+import ImageIO
+import CoreGraphics
 import VaultCore
 
 final class FeatureTests: XCTestCase {
@@ -185,6 +187,96 @@ final class SecureUnlockTests: XCTestCase {
         XCTAssertFalse(store.unlocked)
         XCTAssertTrue(store.records.isEmpty)
         XCTAssertTrue(store.error?.contains("did not regain focus") == true)
+    }
+
+}
+
+@MainActor
+final class SmartFolderScanTests: XCTestCase {
+    func testScanPipelinePersistsCatalogGraphAndIdempotentRescan() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sources = root.appendingPathComponent("Sources"), storage = root.appendingPathComponent("Storage")
+        try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+        try Data("cells and genetics".utf8).write(to: sources.appendingPathComponent("Biology.txt"))
+        try Data("unknown content".utf8).write(to: sources.appendingPathComponent("notes.txt"))
+        let library = LibraryStore(base: storage), workspace = WorkspaceStore(base: storage)
+        var source = ScanLocation(name: "Sources", bookmark: try sources.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil))
+        source.sourcePath = sources.path; source.sourceIdentity = FileAccessService.identity(at: sources)
+        workspace.pendingLocations = [source]; workspace.scanCategories = [.documents]; workspace.scanMonitorFolders = false
+        workspace.startFolderScan(library: library); await workspace.scanTask?.value
+        XCTAssertEqual(library.library.files.count, 2)
+        XCTAssertEqual(workspace.data.lastScan?.stage, .completed)
+        XCTAssertEqual(workspace.data.lastScan?.addedIDs.count, 2)
+        XCTAssertTrue(workspace.data.subjects.contains { $0.name == "Biology" && !$0.fileIDs.isEmpty })
+        XCTAssertTrue(library.library.collections.contains { $0.organizationKey == "needs-review" })
+        XCTAssertFalse(workspace.data.organizationFacts?.isEmpty ?? true)
+        XCTAssertTrue(workspace.data.locations.isEmpty)
+        workspace.change { data in
+            for index in data.subjects.indices { data.subjects[index].fileIDs = [] }
+        }
+        workspace.retryScan(library: library); await workspace.scanTask?.value
+        XCTAssertTrue(workspace.data.subjects.allSatisfy { $0.fileIDs.isEmpty })
+        XCTAssertEqual(library.library.files.count, 2)
+        XCTAssertEqual(workspace.data.lastScan?.addedIDs.count, 0)
+        XCTAssertEqual(workspace.data.lastScan?.relationshipCount, 0)
+        let loaded = WorkspaceStore(base: storage)
+        XCTAssertEqual(loaded.data.lastScan?.stage, .completed)
+        XCTAssertEqual(loaded.data.subjects.count, workspace.data.subjects.count)
+        XCTAssertEqual(try String(contentsOf: sources.appendingPathComponent("Biology.txt")), "cells and genetics")
+    }
+    func testInterruptedScanIsRecoveredAsRetryableWithoutRemovingCatalog() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = WorkspaceStore(base: root)
+        var job = ScanJob(sources: []); job.stage = .organizing
+        first.change { $0.lastScan = job }
+        let reopened = WorkspaceStore(base: root)
+        XCTAssertEqual(reopened.data.lastScan?.stage, .interrupted)
+    }
+    func testRealEXIFMetadataDrivesPhotoGroupsAndGPSOptIn() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let url = root.appendingPathComponent("fixture.jpg")
+        let context = try XCTUnwrap(CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        let image = try XCTUnwrap(context.makeImage())
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, "public.jpeg" as CFString, 1, nil))
+        let properties: [String: Any] = [
+            kCGImagePropertyExifDictionary as String: [kCGImagePropertyExifDateTimeOriginal as String: "2024:07:15 10:20:30"],
+            kCGImagePropertyGPSDictionary as String: [kCGImagePropertyGPSLatitude as String: 14.60, kCGImagePropertyGPSLatitudeRef as String: "N", kCGImagePropertyGPSLongitude as String: 120.98, kCGImagePropertyGPSLongitudeRef as String: "E"]
+        ]
+        CGImageDestinationAddImage(destination, image, properties as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        let bookmark = try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        let file = FileItem(filename: "fixture.jpg", type: "jpg", bookmark: bookmark, originalLocation: url.path, ownership: .original, size: Int64(try Data(contentsOf: url).count))
+        var source = ScanLocation(name: "Photos", bookmark: Data()); source.includePhotoLocations = true
+        let service = SmartOrganizationService()
+        let allowed = try await service.facts(for: file, source: source, existingSubjects: [])
+        XCTAssertEqual(allowed.0.captureMonth, "2024-07")
+        XCTAssertNotNil(allowed.0.gpsArea)
+        XCTAssertTrue(allowed.0.gpsArea?.contains("approx.") == true)
+        source.includePhotoLocations = false
+        let withheld = try await service.facts(for: file, source: source, existingSubjects: [])
+        XCTAssertEqual(withheld.0.captureMonth, "2024-07")
+        XCTAssertNil(withheld.0.gpsArea)
+    }
+    func testCancelledScanRetainsOriginalAndSupportsRetry() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("Source"), storage = root.appendingPathComponent("Storage")
+        try FileManager.default.createDirectory(at: sourceURL, withIntermediateDirectories: true)
+        let url = sourceURL.appendingPathComponent("notes.txt"); try Data("original".utf8).write(to: url)
+        let library = LibraryStore(base: storage), workspace = WorkspaceStore(base: storage)
+        let bookmark = try sourceURL.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        workspace.pendingLocations = [ScanLocation(name: "Source", bookmark: bookmark)]
+        workspace.scanMonitorFolders = false
+        workspace.startFolderScan(library: library); workspace.cancelScan(); await workspace.scanTask?.value
+        XCTAssertEqual(workspace.data.lastScan?.stage, .cancelled)
+        XCTAssertEqual(try String(contentsOf: url), "original")
+        workspace.retryScan(library: library); await workspace.scanTask?.value
+        XCTAssertEqual(workspace.data.lastScan?.stage, .completed)
+        XCTAssertEqual(library.library.files.count, 1)
     }
 
 }

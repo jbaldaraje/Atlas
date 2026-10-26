@@ -73,6 +73,9 @@ struct FileInspector: View {
                         }
                     }.padding(.top, 12)
                 }
+                if let facts = workspace.data.organizationFacts?[file.id] {
+                    organizationEvidence(facts)
+                }
                 DisclosureGroup("File information", isExpanded: $showMetadata) {
                     VStack(alignment: .leading, spacing: 14) {
                         detail("Created on disk", file.createdAt?.formatted(date: .abbreviated, time: .shortened) ?? "Unavailable")
@@ -89,6 +92,33 @@ struct FileInspector: View {
             }.padding(22)
         }.sheet(isPresented: $preview) { FilePreview(file: file) }
             .onAppear { description = file.description; tags = file.tags.joined(separator: ", ") }
+    }
+    private func organizationEvidence(_ facts: OrganizationFacts) -> some View {
+        DisclosureGroup("Organization evidence") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Folder context: " + facts.folderContext).font(.caption).textSelection(.enabled)
+                if let date = facts.captureDate { Text("EXIF capture time (as recorded): " + date).font(.caption) }
+                if let month = facts.captureMonth { Text("EXIF capture month: " + month).font(.caption) }
+                if let area = facts.gpsArea { Text("EXIF GPS area: " + area).font(.caption) }
+                Text("Document content: " + facts.textStatus).font(.caption).foregroundStyle(.secondary)
+                ForEach(facts.topics.keys.sorted(), id: \.self) { topic in
+                    Text(topic + ": " + (facts.topics[topic] ?? "")).font(.caption)
+                }
+                ForEach(facts.reviewReasons, id: \.self) { Text($0).font(.caption).foregroundStyle(VaultStyle.amber) }
+                if !facts.reviewReasons.isEmpty { Button("Mark Reviewed") { markReviewed(facts) } }
+                Text("Group memberships and subjects remain editable above. No original file was moved or renamed.").font(.caption).foregroundStyle(.secondary)
+            }.padding(.top, 12)
+        }
+    }
+    private func markReviewed(_ facts: OrganizationFacts) {
+        var updated = file
+        let reviewIDs = Set(store.library.collections.filter { $0.organizationKey == "needs-review" }.map(\.id))
+        updated.collectionIDs.subtract(reviewIDs)
+        guard store.update(updated) else { return }
+        workspace.change { data in
+            var reviewed = facts; reviewed.reviewReasons = []; reviewed.generatedGroupIDs?.subtract(reviewIDs)
+            data.organizationFacts?[file.id] = reviewed
+        }
     }
     private var contentTools: some View {
         VStack(alignment: .leading, spacing: 12) {

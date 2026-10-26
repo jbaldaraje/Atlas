@@ -15,7 +15,7 @@ cd Packages/VaultCore
 swift test
 ```
 
-The package contains **17 tests**; the Xcode integration target contains **16 tests**. They have been written but **not executed** here. This Linux machine has neither Swift nor the macOS SDK. [macOS CI](.github/workflows/macos.yml) is provided but has not run. Unsigned CLI builds cannot validate signed sandbox behavior.
+The package contains **24 tests**; the Xcode integration target contains **20 tests**. They have been written but **not executed** here. This Linux machine has neither Swift nor the macOS SDK. [macOS CI](.github/workflows/macos.yml) is provided but has not run. Unsigned CLI builds cannot validate signed sandbox behavior.
 
 ## If Xcode reports “Unable to find module dependency: VaultCore”
 
@@ -42,7 +42,7 @@ If it still fails, report the exact message shown. Keychain failures now include
 ## Use the workspaces
 
 - **Overview / All Files:** Add Files (⌘I), review scope, index originals or create verified copies. Browse grid/list, search filename/description/tags and opt-in extracted text, sort/filter, favorite, create collections, and edit metadata in the inspector. Drop files onto regular library workspaces to review import. ⌘-click files and use Organize for batch tags, collection membership, favorites, or confirmed index removal.
-- **Overview / Approved Locations:** Approve a folder and inspect its complete regular-file listing before indexing/monitoring. Polling runs every 30 seconds while Vault is open. Select Documents, PDFs, Images, Media (audio/video), Other, or All Types in the scan review. Counts, total size, and the file list update to match your choices. Use **File Types…** on an approved folder to change future scans; existing indexed files stay in your library. Pause, exclude relative subfolders, or disconnect. Hidden files/packages/symlinks are skipped; over 10,000 files rejects the scan. Missing references are preserved and produce access errors on open.
+- **Scan Folders / Approved Locations:** Use Scan Folders on Overview or the sidebar, select multiple folders, choose presets/categories and optional local text/GPS processing, then Start Scan. Progress/results show added files, topics, photo groups, review items, possible duplicates, and errors. Retry is safe for known files. Existing monitoring runs every 30 seconds while Vault is open; pause, exclude relative paths, change File Types, or disconnect. Metadata-only scanning never moves originals. See [smart scanning integration and limitations](docs/SmartScanning.md).
 - **Subjects:** Create subjects, edit descriptions/deadlines, link documents, and explicitly record study sessions. Opening a file never counts as study.
 - **Knowledge Map:** Explore file-type nodes and curved connections; pan/pinch/zoom/fit, focus direct neighbors, switch to a list, filter layers, and create links through file context menus. Double-click opens real files. Node positions persist. A short selection pulse respects Reduce Motion; rendering is capped at 150 matching nodes. Inspect relationships from the file inspector to remove links.
 - **Timeline:** See Vault-added events, explicit study records, and separately labeled filesystem modification dates.

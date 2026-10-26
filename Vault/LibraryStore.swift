@@ -19,8 +19,7 @@ final class LibraryStore: ObservableObject {
     private let repository: LibraryRepository
     let managedDirectory: URL
 
-    init() {
-        let base = URL.applicationSupportDirectory.appendingPathComponent("Vault", isDirectory: true)
+    init(base: URL = URL.applicationSupportDirectory.appendingPathComponent("Vault", isDirectory: true)) {
         repository = LibraryRepository(url: base.appendingPathComponent("library.json"))
         managedDirectory = base.appendingPathComponent("Files", isDirectory: true)
         do { library = try repository.load() }
@@ -31,10 +30,10 @@ final class LibraryStore: ObservableObject {
         do { try repository.save(next); library = next; return true }
         catch { message = "Metadata could not be saved. Your previous library remains unchanged."; return false }
     }
-    func update(_ file: FileItem) {
+    @discardableResult func update(_ file: FileItem) -> Bool {
         var next = library
-        guard let index = next.files.firstIndex(where: { $0.id == file.id }) else { return }
-        next.files[index] = file; commit(next)
+        guard let index = next.files.firstIndex(where: { $0.id == file.id }) else { return false }
+        next.files[index] = file; return commit(next)
     }
     func removeFromIndex(_ id: UUID) { var next = library; next.removeFromIndex(id); commit(next) }
     func addCollection(_ name: String) {
@@ -94,8 +93,8 @@ final class LibraryStore: ObservableObject {
         next.files.removeAll { $0.id == file.id }; next.files.append(file)
         return commit(next)
     }
-    func synchronize(_ entries: [ImportCandidate], folderBookmark: Data) async {
-        guard !busy, !loadFailed else { return }
+    @discardableResult func synchronize(_ entries: [ImportCandidate], folderBookmark: Data, progress: (@Sendable (Int, Int) -> Void)? = nil) async -> CatalogSyncResult {
+        guard !busy, !loadFailed else { return CatalogSyncResult(errors: ["Catalog is busy or unavailable."]) }
         busy = true
         defer { busy = false }
         var stale = false
@@ -104,25 +103,21 @@ final class LibraryStore: ObservableObject {
             guard !stale else { throw FileAccessService.AccessError.staleBookmark }
             let access = folder.startAccessingSecurityScopedResource()
             defer { if access { folder.stopAccessingSecurityScopedResource() } }
-            let report = await FileAccessService.run(entries, copy: false, managedDirectory: managedDirectory, existingPaths: [])
+            let report = await FileAccessService.run(entries, copy: false, managedDirectory: managedDirectory, existingPaths: [], progress: progress)
             var next = library
-            var changed = false
-            for fresh in report.items {
-                let index = next.files.firstIndex { old in
-                    guard old.ownership == .original else { return false }
-                    return (try? FileAccessService.withAccess(old) { $0.standardizedFileURL.path }) == fresh.originalLocation || old.originalLocation == fresh.originalLocation
-                }
-                if let index {
-                    if next.files[index].modifiedAt != fresh.modifiedAt || next.files[index].size != fresh.size || next.files[index].originalLocation != fresh.originalLocation {
-                        next.files[index].filename = fresh.filename; next.files[index].size = fresh.size
-                        next.files[index].modifiedAt = fresh.modifiedAt; next.files[index].bookmark = fresh.bookmark
-                        next.files[index].originalLocation = fresh.originalLocation; changed = true
-                    }
-                } else { next.files.append(fresh); changed = true }
+            for index in next.files.indices where next.files[index].fileIdentity == nil {
+                next.files[index].fileIdentity = try? FileAccessService.withAccess(next.files[index]) { FileAccessService.identity(at: $0) }
             }
-            if changed { commit(next) }
-            if !report.failures.isEmpty { message = "Some monitored files were unavailable. Existing references were preserved." }
-        } catch { message = error.localizedDescription }
+            let merge = next.mergeScanned(report.items)
+            guard commit(next) else { return CatalogSyncResult(errors: ["Catalog metadata could not be saved."]) }
+            return CatalogSyncResult(merge: merge, attempted: report.items.count + report.failures.count, errors: report.failures.map { "Unavailable file: " + $0 })
+        } catch { return CatalogSyncResult(errors: [error.localizedDescription]) }
+    }
+    @discardableResult func applyOrganization(_ facts: [OrganizationFacts], workspace: inout Workspace) -> OrganizationCounts? {
+        var next = library
+        let counts = OrganizationRules.apply(facts, library: &next, workspace: &workspace)
+        guard commit(next) else { return nil }
+        return counts
     }
     func open(_ file: FileItem) {
         Task {
@@ -143,4 +138,10 @@ final class LibraryStore: ObservableObject {
         do { try FileAccessService.withAccess(file) { NSWorkspace.shared.activateFileViewerSelecting([$0]) } }
         catch { message = error.localizedDescription }
     }
+}
+
+struct CatalogSyncResult {
+    var merge = CatalogMerge()
+    var attempted = 0
+    var errors: [String] = []
 }
