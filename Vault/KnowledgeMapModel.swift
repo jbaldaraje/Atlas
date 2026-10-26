@@ -27,7 +27,7 @@ actor KnowledgeGraphEngine {
     private(set) var buildCount = 0
     init(base: URL) { layoutURL = base.appendingPathComponent("graph-layout.json") }
 
-    func prepare(request: GraphRequest, library: Library, subjects: [Subject], relationships: [Relationship], legacyPositions: [UUID: SpatialPoint]) throws -> PreparedGraph {
+    func prepare(request: GraphRequest, library: Library, subjects: [VaultCore.Subject], relationships: [Relationship], legacyPositions: [UUID: SpatialPoint]) throws -> PreparedGraph {
         try Task.checkCancellation()
         if revision != request.revision || index == nil {
             let next = try KnowledgeGraphIndex(library: library, subjects: subjects, relationships: relationships)
@@ -76,7 +76,7 @@ final class KnowledgeMapModel: ObservableObject {
     init(base: URL = URL.applicationSupportDirectory.appendingPathComponent("Vault", isDirectory: true)) {
         engine = KnowledgeGraphEngine(base: base)
     }
-    func load(_ request: GraphRequest, library: Library, subjects: [Subject], relationships: [Relationship], legacyPositions: [UUID: SpatialPoint]) async {
+    func load(_ request: GraphRequest, library: Library, subjects: [VaultCore.Subject], relationships: [Relationship], legacyPositions: [UUID: SpatialPoint]) async {
         guard completedRequest != request else { return }
         let current = UUID(); token = current; loading = true; error = nil
         defer { if token == current { loading = false } }
@@ -97,7 +97,7 @@ final class KnowledgeMapModel: ObservableObject {
         positions[id] = point
         Task {
             do { try await engine.move(id, to: point) }
-            catch { error = "The node position could not be saved. Your files and relationships are unchanged." }
+            catch { self.error = "The node position could not be saved. Your files and relationships are unchanged." }
         }
     }
     func retry() { completedRequest = nil }
