@@ -4,7 +4,7 @@ This update extends the existing app and its existing folder-scan workflow. The 
 
 ## Entry points and workflow
 
-Use **Scan Folders** on Overview or in the sidebar. Existing **Approve Folder…** opens the same workflow. The native picker accepts multiple folders; no enumeration starts until **Start Scan**. The review lists exact source paths, categories, and optional processing permissions. Counts/sizes are explicitly measured during discovery rather than invented in advance. Each source is limited to 10,000 regular files; large scopes fail with a visible error and can be retried with smaller selections. Hidden files, packages, symbolic links, and configured excluded paths are skipped.
+Use **Scan Folders** on Overview or in the sidebar. Existing **Approve Folder…** opens the same workflow. The native picker accepts multiple folders; no enumeration starts until **Start Scan**. The review lists exact source paths, categories, and optional processing permissions. Counts/sizes are explicitly measured during discovery rather than invented in advance. There is no artificial file-count limit. Manual scans and monitoring pull bounded chunks from a background enumeration cursor and finish indexing/organizing each chunk before discovering more files. Chunk size controls temporary buffering, never the total scan size. Hidden files, packages, symbolic links, and configured excluded paths are skipped.
 
 Quick selections are All Supported Files, Documents (documents/PDF/presentations/data), Photos & Media, and custom checkboxes. Presentations, spreadsheets/data, archives, images, media, ordinary documents, PDFs, and other catalogable types are distinct groups. Other files get metadata/default-app behavior; text/preview support is never implied for every type.
 
@@ -59,8 +59,16 @@ Modified:
 
 ## Validation
 
-Static Swift grammar parsing and Xcode object/source-reference checks pass. Attempted `swift test` and `xcodebuild … build` both exited 127 because the Linux host has neither tool. **No native compilation, XCTest, or runtime validation occurred.** The repository now has 24 package and 20 native test methods, all unrun here.
+Static Swift grammar parsing and Xcode object/source-reference checks pass. Attempted `swift test` and `xcodebuild … build` both exited 127 because the Linux host has neither tool. **No native compilation, XCTest, or runtime validation occurred.** The repository now has 24 package and 23 native test methods, all unrun here.
 
 New tests cover filesystem-identity merges preserving manual metadata; idempotent memberships; real versus missing photo facts; invalid GPS; topic evidence thresholds; legacy category and metadata decoding; the complete scan/catalog/subject/review pipeline and repeated scan; manual subject removal surviving an unchanged rescan; interrupted-job recovery; generated JPEG EXIF/GPS metadata and opt-in handling; and cancellation/retry preserving originals.
 
 On macOS, build and run the README commands, then test two overlapping disposable folders containing mixed formats. Review presets before Start, cancel/retry, compare original bytes/paths, inspect subject/date/GPS/review groups in the existing map, modify a file and let monitoring refresh it, restart mid-job, revoke folder permission, and verify unavailable-file reporting. Run light/dark/accessibility checks to confirm the existing design and interactions remain intact.
+
+### Local scanning without a file-count cap
+
+The previous 10,000-entry failure has been removed. FolderScanCursor streams discovery in chunks of up to 512 visited entries. The scan coordinator commits catalog and organization work between chunks, while monitoring uses the same cursor. Filtered/empty chunks do not rewrite the catalog. Scope access is closed on completion, cancellation, or failure, with idempotent explicit close and deinitialization cleanup. The collection-returning discovery methods remain available for callers needing an array, but production scan/monitor paths do not collect all source candidates before indexing.
+
+Progress is cumulative across chunks; cancellation retains completed catalog batches, and Retry Scan can resume by safely rescanning known identities. There is no guaranteed maximum capacity or performance claim: the existing catalog/workspace stores still grow with the indexed library and use atomic JSON snapshots. This update removes the arbitrary scan quota and bounds transient discovery/organization buffers; it does not replace persistence with a disk-paged database.
+
+Three additional native regression tests cover 10,003 files (past the former cap) while asserting per-chunk buffering, repeated cursor closure without file deletion, and a complete catalog/organization scan spanning multiple chunks. These tests remain unrun in the Linux environment.

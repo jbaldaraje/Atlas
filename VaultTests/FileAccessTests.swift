@@ -63,4 +63,41 @@ final class FileAccessTests: XCTestCase {
         XCTAssertTrue(none.isEmpty)
     }
 
+    func testStreamingDiscoveryContinuesPastFormerTenThousandFileCap() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let expectedCount = 10_003
+        for index in 0..<expectedCount {
+            try Data().write(to: root.appendingPathComponent("entry-\(index).txt"))
+        }
+        let bookmark = try root.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        let cursor = try FolderScanCursor(bookmark: bookmark, excludes: [], categories: [.documents])
+        var discovered = 0, selected = 0, batches = 0
+        while true {
+            let batch = try await cursor.nextBatch()
+            discovered += batch.discovery.discovered; selected += batch.discovery.candidates.count; batches += 1
+            XCTAssertLessThanOrEqual(batch.discovery.candidates.count, FolderScanCursor.batchCapacity)
+            XCTAssertTrue(batch.discovery.errors.isEmpty)
+            if batch.finished { break }
+        }
+        await cursor.close()
+        XCTAssertEqual(discovered, expectedCount)
+        XCTAssertEqual(selected, expectedCount)
+        XCTAssertGreaterThan(batches, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("entry-10002.txt").path))
+    }
+    func testClosingCursorStopsFurtherDiscoveryWithoutDeletingFiles() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let original = root.appendingPathComponent("notes.txt"); try Data("original".utf8).write(to: original)
+        let bookmark = try root.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        let cursor = try FolderScanCursor(bookmark: bookmark, excludes: [], categories: ScanFileCategory.all)
+        await cursor.close(); await cursor.close()
+        let batch = try await cursor.nextBatch()
+        XCTAssertTrue(batch.finished); XCTAssertTrue(batch.discovery.candidates.isEmpty)
+        XCTAssertEqual(try String(contentsOf: original), "original")
+    }
+
 }

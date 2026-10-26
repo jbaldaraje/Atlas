@@ -13,7 +13,7 @@ Static checks passed after the expanded implementation:
 - App Sandbox, user-selected read/write capability, and app-scoped bookmark configuration; no network client entitlement. Original index bookmarks explicitly request read-only access.
 - `git diff --check` returned success. All source deliverables are untracked new files in the initially empty, unborn repository, so this is not a tracked-diff review.
 
-Validation parsers were installed from PyPI into `/tmp` and are not app dependencies. The repository's own automated tests are **24 domain/package test methods and 20 macOS integration test methods**; all are currently **unrun**. Syntax parser checks are not substitutes for them.
+Validation parsers were installed from PyPI into `/tmp` and are not app dependencies. The repository's own automated tests are **24 domain/package test methods and 23 macOS integration test methods**; all are currently **unrun**. Syntax parser checks are not substitutes for them.
 
 ## Required next validation
 
@@ -54,3 +54,9 @@ Six injected-dependency tests were added against SecureStore's actual async unlo
 ## Incremental smart scanning and graph organization
 
 See SmartScanning.md for integration, file inventory, limits, and macOS acceptance. Static syntax parsing passes for 34 Swift files; all Xcode references resolve and every app/core source belongs to its native target without duplicate compilation. The existing graph renderer is unchanged. Actual build/test attempts returned exit 127 (`swift: command not found`, `xcodebuild: command not found`). No native tests or application runtime ran. Test sources now total 44 methods: 24 package and 20 native, including real EXIF fixtures and complete catalog/organization/rescan/cancellation tests. These counts describe source methods only, not passing outcomes.
+
+## Removal of the local scan cap
+
+Removed the 10,000-file guard and its error, as requested after a real local scan hit it. Replaced production whole-source discovery with a bounded actor cursor used by both manual scanning and polling. Each chunk is indexed and organized before requesting the next; progress/checkpoints accumulate and scopes close on success, cancellation, or errors. UI and current scanning documentation no longer advertise a source-file quota.
+
+Added native regression sources for 10,003-file discovery with bounded chunks; idempotent cursor closing that preserves originals; and a full multi-chunk scan with a persisted catalog containing every file. The repository now contains 47 test methods (24 package, 23 native), all unrun here. Static syntax, project-reference, and whitespace checks pass. Swift/Xcode remain unavailable on Linux, so the removal and batching behavior still need native compilation/execution. Existing JSON persistence remains an independent large-library performance limitation rather than an imposed scan-count limit.

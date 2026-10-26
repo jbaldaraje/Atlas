@@ -109,7 +109,7 @@ final class LibraryStore: ObservableObject {
                 next.files[index].fileIdentity = try? FileAccessService.withAccess(next.files[index]) { FileAccessService.identity(at: $0) }
             }
             let merge = next.mergeScanned(report.items)
-            guard commit(next) else { return CatalogSyncResult(errors: ["Catalog metadata could not be saved."]) }
+            guard commit(next) else { return CatalogSyncResult(attempted: report.items.count + report.failures.count, errors: ["Catalog metadata could not be saved."]) }
             return CatalogSyncResult(merge: merge, attempted: report.items.count + report.failures.count, errors: report.failures.map { "Unavailable file: " + $0 })
         } catch { return CatalogSyncResult(errors: [error.localizedDescription]) }
     }

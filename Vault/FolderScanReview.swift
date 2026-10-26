@@ -30,7 +30,7 @@ struct FolderScanReview: View {
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }.frame(maxHeight: 95)
             ScanCategoryPicker(selection: $workspace.scanCategories)
-            Text("File counts and sizes will be measured during the scan (up to 10,000 regular files per source). Hidden files, packages, excluded folders, and symbolic links are skipped. All file types can be cataloged; previews and text support vary.").font(.caption).foregroundStyle(.secondary)
+            Text("File counts and sizes will be measured as files are scanned in batches, with no file-count cap. Hidden files, packages, excluded folders, and symbolic links are skipped. All file types can be cataloged; previews and text support vary.").font(.caption).foregroundStyle(.secondary)
             Toggle("Enable / update monitoring for selected folders after scanning", isOn: $workspace.scanMonitorFolders)
             Text("Leave monitoring off to preserve any existing folder monitoring preferences.").font(.caption).foregroundStyle(.secondary)
             Toggle("Extract supported document text locally for topic suggestions", isOn: $workspace.scanExtractText)

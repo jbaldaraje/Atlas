@@ -60,25 +60,34 @@ extension WorkspaceStore {
     private func scanSource(_ source: ScanLocation, library: LibraryStore) async throws {
         scanSourceID = source.id
         activeScan?.stage = .enumerating; scanCurrentFile = source.sourcePath ?? source.name
-        let baseDiscovered = activeScan?.discovered ?? 0
-        let jobID = activeScan?.id
         checkpointScan()
-        let discovered = try await FileAccessService.discoverFolder(source.bookmark, excludes: source.excludes, categories: source.fileCategories, progress: { [weak self] count in
-            Task { @MainActor in
-                guard self?.activeScan?.id == jobID, self?.scanSourceID == source.id, self?.activeScan?.stage == .enumerating else { return }
-                self?.activeScan?.discovered = baseDiscovered + count
+        let cursor = try FolderScanCursor(bookmark: source.bookmark, excludes: source.excludes, categories: source.fileCategories)
+        do {
+            while true {
+                try Task.checkCancellation()
+                activeScan?.stage = .enumerating
+                scanCurrentFile = source.sourcePath ?? source.name
+                let batch = try await cursor.nextBatch()
+                activeScan?.discovered += batch.discovery.discovered
+                activeScan?.skipped += batch.discovery.skipped
+                activeScan?.errors.append(contentsOf: batch.discovery.errors)
+                if !batch.discovery.candidates.isEmpty {
+                    try await indexScanBatch(batch.discovery.candidates, source: source, library: library)
+                }
+                guard checkpointScan() else { throw CocoaError(.fileWriteUnknown) }
+                if batch.finished { break }
             }
-        })
-        activeScan?.discovered = baseDiscovered + discovered.discovered
-        activeScan?.skipped += discovered.skipped
-        activeScan?.errors.append(contentsOf: discovered.errors)
-        try Task.checkCancellation()
-        activeScan?.stage = .indexing; checkpointScan()
+            await cursor.close()
+        } catch { await cursor.close(); throw error }
+    }
+    private func indexScanBatch(_ entries: [ImportCandidate], source: ScanLocation, library: LibraryStore) async throws {
+        activeScan?.stage = .indexing
         let baseProcessed = activeScan?.processed ?? 0
-        let synced = await library.synchronize(discovered.candidates, folderBookmark: source.bookmark, progress: { [weak self] count, _ in
+        let jobID = activeScan?.id
+        let synced = await library.synchronize(entries, folderBookmark: source.bookmark, progress: { [weak self] count, _ in
             Task { @MainActor in
                 guard self?.activeScan?.id == jobID, self?.scanSourceID == source.id, self?.activeScan?.stage == .indexing else { return }
-                self?.activeScan?.processed = baseProcessed + count
+                self?.activeScan?.processed = max(self?.activeScan?.processed ?? 0, baseProcessed + count)
             }
         })
         activeScan?.processed = baseProcessed + synced.attempted
@@ -87,7 +96,7 @@ extension WorkspaceStore {
         activeScan?.skipped += synced.merge.unchanged
         activeScan?.errors.append(contentsOf: synced.errors)
         try Task.checkCancellation()
-        activeScan?.stage = .organizing; checkpointScan()
+        activeScan?.stage = .organizing
         var pending: [OrganizationFacts] = [], texts: [UUID: String] = [:]
         for file in library.library.files where synced.merge.fileIDs.contains(file.id) {
             try Task.checkCancellation(); scanCurrentFile = file.filename

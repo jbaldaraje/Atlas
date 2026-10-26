@@ -104,25 +104,38 @@ final class WorkspaceStore: ObservableObject {
                 self.working = true
                 for location in self.data.locations where !location.paused {
                     do {
-                        let entries = try await FileAccessService.scanFolder(location.bookmark, excludes: location.excludes, categories: location.fileCategories)
-                        guard self.data.locations.contains(where: { $0.id == location.id && !$0.paused && $0.excludes == location.excludes && $0.fileCategories == location.fileCategories }) else { continue }
-                        let synced = await library.synchronize(entries, folderBookmark: location.bookmark)
-                        if !synced.errors.isEmpty { self.error = synced.errors.joined(separator: "\n") }
-                        var facts: [OrganizationFacts] = []
-                        var texts: [UUID: String] = [:]
-                        for file in library.library.files where synced.merge.fileIDs.contains(file.id) {
-                            guard self.data.locations.contains(where: { $0.id == location.id && !$0.paused && $0.extractContent == location.extractContent && $0.includePhotoLocations == location.includePhotoLocations }) else { break }
-                            if self.needsOrganization(file, source: location) {
-                                let result = try await self.organizer.facts(for: file, source: location, existingSubjects: self.data.subjects.map(\.name))
-                                facts.append(result.0); if let text = result.1 { texts[file.id] = text }
-                            }
-                        }
-                        self.commitOrganization(facts, texts: texts, library: library)
+                        try await self.refreshMonitoredFolder(location, library: library)
                     } catch { self.error = "Monitoring \(location.name) failed. Pause, reconnect, or approve the folder again." }
                 }
                 self.working = false
             }
         }
+    }
+    private func refreshMonitoredFolder(_ location: ScanLocation, library: LibraryStore) async throws {
+        let cursor = try FolderScanCursor(bookmark: location.bookmark, excludes: location.excludes, categories: location.fileCategories)
+        do {
+            while true {
+                try Task.checkCancellation()
+                guard data.locations.contains(where: { $0.id == location.id && !$0.paused && $0.excludes == location.excludes && $0.fileCategories == location.fileCategories }) else { break }
+                let batch = try await cursor.nextBatch()
+                let synced: CatalogSyncResult
+                if batch.discovery.candidates.isEmpty { synced = CatalogSyncResult() }
+                else { synced = await library.synchronize(batch.discovery.candidates, folderBookmark: location.bookmark) }
+                let errors = batch.discovery.errors + synced.errors
+                if !errors.isEmpty { error = errors.joined(separator: "\n") }
+                var facts: [OrganizationFacts] = [], texts: [UUID: String] = [:]
+                for file in library.library.files where synced.merge.fileIDs.contains(file.id) {
+                    guard data.locations.contains(where: { $0.id == location.id && !$0.paused && $0.extractContent == location.extractContent && $0.includePhotoLocations == location.includePhotoLocations }) else { break }
+                    if needsOrganization(file, source: location) {
+                        let result = try await organizer.facts(for: file, source: location, existingSubjects: data.subjects.map(\.name))
+                        facts.append(result.0); if let text = result.1 { texts[file.id] = text }
+                    }
+                }
+                commitOrganization(facts, texts: texts, library: library)
+                if batch.finished { break }
+            }
+            await cursor.close()
+        } catch { await cursor.close(); throw error }
     }
     func cancelFolderReview() {
         guard !scanIsActive else { return }

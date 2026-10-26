@@ -279,4 +279,24 @@ final class SmartFolderScanTests: XCTestCase {
         XCTAssertEqual(library.library.files.count, 1)
     }
 
+    func testCatalogScanProcessesEveryStreamingBatch() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("Source"), storage = root.appendingPathComponent("Storage")
+        try FileManager.default.createDirectory(at: sourceURL, withIntermediateDirectories: true)
+        let count = FolderScanCursor.batchCapacity + 5
+        for index in 0..<count { try Data().write(to: sourceURL.appendingPathComponent("notes-\(index).txt")) }
+        let library = LibraryStore(base: storage), workspace = WorkspaceStore(base: storage)
+        let bookmark = try sourceURL.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        workspace.pendingLocations = [ScanLocation(name: "Source", bookmark: bookmark)]; workspace.scanMonitorFolders = false
+        workspace.startFolderScan(library: library); await workspace.scanTask?.value
+        XCTAssertEqual(workspace.data.lastScan?.stage, .completed)
+        XCTAssertEqual(workspace.data.lastScan?.discovered, count)
+        XCTAssertEqual(workspace.data.lastScan?.processed, count)
+        XCTAssertEqual(workspace.data.lastScan?.addedIDs.count, count)
+        XCTAssertEqual(library.library.files.count, count)
+        XCTAssertEqual(LibraryStore(base: storage).library.files.count, count)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sourceURL.appendingPathComponent("notes-\(count - 1).txt").path))
+    }
+
 }
