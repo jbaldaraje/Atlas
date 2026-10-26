@@ -293,15 +293,104 @@ final class SmartFolderScanTests: XCTestCase {
         XCTAssertEqual(workspace.data.lastScan?.stage, .completed)
         XCTAssertEqual(workspace.data.lastScan?.discovered, count)
         XCTAssertEqual(workspace.data.lastScan?.processed, count)
+        XCTAssertEqual(workspace.data.lastScan?.progress?.totalFiles, count)
+        XCTAssertEqual(workspace.data.lastScan?.progress?.countedEntries, count)
+        XCTAssertEqual(workspace.data.lastScan?.progress?.indexedFiles, count)
+        XCTAssertEqual(workspace.data.lastScan?.progress?.organizedFiles, count)
+        XCTAssertEqual(workspace.data.lastScan?.percentCompleted, 100)
         XCTAssertEqual(workspace.data.lastScan?.addedIDs.count, count)
         XCTAssertEqual(library.library.files.count, count)
         XCTAssertEqual(LibraryStore(base: storage).library.files.count, count)
         XCTAssertTrue(FileManager.default.fileExists(atPath: sourceURL.appendingPathComponent("notes-\(count - 1).txt").path))
     }
 
+    func testMinimizedScanFinishesWithoutReopeningSheetAndCanShowResults() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("Source"), storage = root.appendingPathComponent("Storage")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try Data("notes".utf8).write(to: source.appendingPathComponent("notes.txt"))
+        try Data("image".utf8).write(to: source.appendingPathComponent("ignored.png"))
+        let library = LibraryStore(base: storage), workspace = WorkspaceStore(base: storage)
+        let bookmark = try source.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        workspace.pendingLocations = [ScanLocation(name: "Source", bookmark: bookmark)]
+        workspace.scanCategories = [.documents]; workspace.scanMonitorFolders = false
+        workspace.startFolderScan(library: library)
+        let jobID = workspace.activeScan?.id
+        workspace.minimizeScan(); workspace.cancelFolderReview() // Matches sheet onDismiss.
+        XCTAssertTrue(workspace.scanIsActive); XCTAssertTrue(workspace.scanMinimized); XCTAssertFalse(workspace.reviewFolder)
+        workspace.dismissScanStatus()
+        XCTAssertTrue(workspace.scanMinimized) // Running work cannot be silently hidden.
+        workspace.showScanResults()
+        XCTAssertTrue(workspace.reviewFolder); XCTAssertFalse(workspace.scanMinimized)
+        XCTAssertEqual(workspace.activeScan?.id, jobID)
+        workspace.minimizeScan()
+        await workspace.scanTask?.value
+        XCTAssertFalse(workspace.reviewFolder); XCTAssertTrue(workspace.scanMinimized)
+        XCTAssertEqual(workspace.data.lastScan?.stage, .completed)
+        XCTAssertEqual(workspace.data.lastScan?.progress?.totalFiles, 1)
+        XCTAssertEqual(workspace.data.lastScan?.discovered, 2) // Counting pass is not double-counted.
+        XCTAssertEqual(library.library.search("notes").count, 1)
+        XCTAssertEqual(WorkspaceStore(base: storage).data.lastScan?.percentCompleted, 100)
+        workspace.showScanResults()
+        XCTAssertTrue(workspace.reviewFolder); XCTAssertEqual(workspace.scanPresentation, .results)
+        XCTAssertEqual(workspace.activeScan?.id, jobID)
+        workspace.dismissScanStatus(); XCTAssertFalse(workspace.scanMinimized)
+    }
+    func testCancelWhileMinimizedKeepsStatusAndRetryStartsNewJob() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("Source"), storage = root.appendingPathComponent("Storage")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        let file = source.appendingPathComponent("notes.txt"); try Data("original".utf8).write(to: file)
+        let library = LibraryStore(base: storage), workspace = WorkspaceStore(base: storage)
+        let bookmark = try source.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        workspace.pendingLocations = [ScanLocation(name: "Source", bookmark: bookmark)]; workspace.scanMonitorFolders = false
+        workspace.startFolderScan(library: library); let firstID = workspace.activeScan?.id
+        workspace.minimizeScan(); workspace.cancelScan()
+        XCTAssertTrue(workspace.scanCancellationRequested)
+        await workspace.scanTask?.value
+        XCTAssertEqual(workspace.data.lastScan?.stage, .cancelled)
+        XCTAssertNil(workspace.data.lastScan?.percentCompleted)
+        XCTAssertTrue(workspace.scanMinimized); XCTAssertFalse(workspace.reviewFolder)
+        XCTAssertFalse(workspace.scanCancellationRequested)
+        workspace.retryScan(library: library)
+        XCTAssertNotEqual(workspace.activeScan?.id, firstID)
+        XCTAssertFalse(workspace.scanMinimized); XCTAssertTrue(workspace.reviewFolder)
+        await workspace.scanTask?.value
+        XCTAssertEqual(workspace.data.lastScan?.percentCompleted, 100)
+        XCTAssertEqual(try String(contentsOf: file), "original")
+    }
+
+    func testEmptyScanFinishesWithKnownZeroTotal() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("Empty")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        let library = LibraryStore(base: root.appendingPathComponent("Storage")), workspace = WorkspaceStore(base: root.appendingPathComponent("Storage"))
+        let bookmark = try source.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        workspace.pendingLocations = [ScanLocation(name: "Empty", bookmark: bookmark)]; workspace.scanMonitorFolders = false
+        workspace.startFolderScan(library: library); await workspace.scanTask?.value
+        XCTAssertEqual(workspace.data.lastScan?.stage, .completed)
+        XCTAssertEqual(workspace.data.lastScan?.progress?.totalFiles, 0)
+        XCTAssertEqual(workspace.data.lastScan?.percentCompleted, 100)
+        XCTAssertTrue(library.library.files.isEmpty)
+    }
+
 }
 
 final class VaultActivityTests: XCTestCase {
+    func testMascotUsesMeasuredScanProgressAndRejectsInvalidValues() {
+        var input = VaultActivityInput(); input.scanStage = .counting
+        XCTAssertNil(VaultActivity.resolve(input).progress)
+        input.scanStage = .indexing; input.scanProgress = 0.42
+        XCTAssertEqual(VaultActivity.resolve(input).progress, 0.42)
+        XCTAssertTrue(VaultActivity.resolve(input).detail.contains("42%"))
+        input.scanProgress = .nan
+        XCTAssertNil(VaultActivity.resolve(input).progress)
+        input.scanProgress = 1
+        XCTAssertEqual(VaultActivity.resolve(input).progress, 0.99)
+    }
     func testScanActivityUsesRealCountsWithoutInventingCompletionPercentage() {
         var input = VaultActivityInput(); input.scanStage = .organizing
         input.discovered = 10003; input.processed = 9000; input.activeFolders = 3

@@ -80,4 +80,55 @@ final class OrganizationTests: XCTestCase {
         let decodedFile = try JSONDecoder().decode(FileItem.self, from: JSONEncoder().encode(file()))
         XCTAssertNil(decodedFile.fileIdentity)
     }
+    func testScanProgressWaitsForKnownTotalAndReservesFinalReview() throws {
+        var job = ScanJob(sources: []); job.stage = .counting; job.progress = ScanWorkProgress()
+        job.progress?.totalFiles = 10
+        XCTAssertNil(job.percentCompleted)
+        job.progress?.countingComplete = true; job.stage = .indexing
+        XCTAssertEqual(job.percentCompleted, 0)
+        job.progress?.indexedFiles = 10
+        XCTAssertEqual(try XCTUnwrap(job.fractionCompleted), 0.475, accuracy: 0.00001)
+        job.stage = .organizing; job.progress?.organizedFiles = 10
+        XCTAssertEqual(try XCTUnwrap(job.fractionCompleted), 0.95, accuracy: 0.00001)
+        job.stage = .duplicates; job.progress?.duplicateTotal = 100; job.progress?.duplicateChecks = 50
+        XCTAssertEqual(try XCTUnwrap(job.fractionCompleted), 0.975, accuracy: 0.00001)
+        job.progress?.duplicateChecks = 100
+        XCTAssertEqual(job.percentCompleted, 99)
+        job.stage = .completed
+        XCTAssertEqual(job.percentCompleted, 100)
+    }
+    func testCancelledFailedAndInterruptedScansNeverClaimCompletion() {
+        var job = ScanJob(sources: []); var progress = ScanWorkProgress()
+        progress.totalFiles = 5; progress.countingComplete = true; progress.indexedFiles = 5; progress.organizedFiles = 5
+        progress.duplicateTotal = 5; progress.duplicateChecks = 5; job.progress = progress
+        for stage in [ScanStage.cancelled, .failed, .interrupted] {
+            job.stage = stage
+            XCTAssertEqual(job.percentCompleted, 99)
+            XCTAssertFalse(stage.isRunning)
+        }
+        XCTAssertTrue(ScanStage.counting.isRunning)
+    }
+    func testProgressHandlesEmptySourcesAndChangingFileCounts() throws {
+        var job = ScanJob(sources: []); job.progress = ScanWorkProgress()
+        job.progress?.countingComplete = true; job.stage = .indexing
+        XCTAssertEqual(job.percentCompleted, 0)
+        job.progress?.totalFiles = 5; job.progress?.indexedFiles = 5; job.progress?.organizedFiles = 5
+        let first = try XCTUnwrap(job.fractionCompleted)
+        job.progress?.totalFiles = 10
+        XCTAssertLessThan(try XCTUnwrap(job.fractionCompleted), first)
+        job.progress?.totalFiles = -1; job.progress?.indexedFiles = -1; job.progress?.organizedFiles = -1
+        XCTAssertEqual(job.percentCompleted, 0)
+        job.stage = .completed
+        XCTAssertEqual(job.percentCompleted, 100)
+    }
+    func testProgressPersistsAndLegacyJobsStillDecode() throws {
+        var job = ScanJob(sources: []); job.stage = .counting; job.progress = ScanWorkProgress()
+        job.progress?.totalFiles = 42; job.progress?.countedEntries = 63
+        let data = try JSONEncoder().encode(job)
+        XCTAssertEqual(try JSONDecoder().decode(ScanJob.self, from: data), job)
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        legacy.removeValue(forKey: "progress"); legacy["stage"] = "indexing"
+        let old = try JSONDecoder().decode(ScanJob.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertNil(old.progress); XCTAssertNil(old.percentCompleted)
+    }
 }

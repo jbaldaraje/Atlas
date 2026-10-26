@@ -115,6 +115,9 @@ struct WorkspaceView: View {
 
     private var inspectedWorkspace: some View {
         navigationLayout
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if workspace.scanMinimized { ScanStatusBar() }
+            }
             .inspector(isPresented: $showInspector) { contextInspector }
             .tint(accent)
             .searchable(text: $query, prompt: "Search names, descriptions, and tags")
@@ -273,7 +276,7 @@ struct WorkspaceView: View {
         case .overview, .files, .media, .collections: break
         default: return false
         }
-        guard !urls.isEmpty, !store.busy, !store.loadFailed else { return false }
+        guard !urls.isEmpty, !store.busy, !store.loadFailed, !workspace.working, !notes.working else { return false }
         store.prepare(urls)
         return true
     }
@@ -312,7 +315,12 @@ struct WorkspaceView: View {
             Image(systemName: section?.symbol ?? "square.grid.2x2").foregroundStyle(accent)
             Text(section?.rawValue ?? "Overview").font(.system(size: 16, weight: .medium))
             Spacer()
-            if store.busy {
+            if workspace.scanIsActive {
+                Button { workspace.showScanResults() } label: {
+                    Label(scanStatusLabel, systemImage: "viewfinder")
+                        .font(.caption.monospacedDigit())
+                }.help("Open scan progress")
+            } else if store.busy && !workspace.monitoringActive && !notes.working {
                 ProgressView().controlSize(.small)
                 Text("\(store.progress)/\(store.total)").font(.caption.monospacedDigit())
                 Button("Cancel") { store.cancelImport() }
@@ -320,6 +328,10 @@ struct WorkspaceView: View {
                 Label("\(workspace.data.locations.filter { !$0.paused }.count) monitored", systemImage: "arrow.triangle.2.circlepath").font(.caption).foregroundStyle(.secondary)
             }
         }.padding(.horizontal, 24).padding(.vertical, 16)
+    }
+    private var scanStatusLabel: String {
+        guard let percent = workspace.activeScan?.percentCompleted else { return "Scan · counting…" }
+        return "Scan · \(percent)%"
     }
     private func inspect(_ id: UUID) { selectedID = id; showInspector = true }
     private var libraryContent: some View {

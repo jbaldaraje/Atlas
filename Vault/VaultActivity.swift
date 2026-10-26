@@ -10,6 +10,7 @@ struct VaultActivityInput {
     var scanStage: ScanStage?
     var discovered = 0
     var processed = 0
+    var scanProgress: Double?
     var importing = false
     var importProgress = 0
     var importTotal = 0
@@ -35,13 +36,16 @@ struct VaultActivity: Equatable {
         if let stage = input.scanStage, stage.isRunning {
             let title: String
             switch stage {
+            case .counting: title = "Counting matching files"
             case .enumerating: title = "Discovering files"
             case .indexing: title = "Indexing your library"
             case .organizing: title = "Connecting your ideas"
             case .duplicates: title = "Reviewing duplicates"
             default: title = "Scanning folders"
             }
-            return VaultActivity(kind: stage == .organizing ? .organizing : .scanning, title: title, detail: "\(input.discovered) found · \(input.processed) processed", progress: nil)
+            let progress = input.scanProgress.flatMap { $0.isFinite ? min(0.99, max(0, $0)) : nil }
+            let detail = progress.map { "\(Int(($0 * 100).rounded(.down)))% complete · \(input.processed) processed" } ?? "\(input.discovered) found · \(input.processed) processed"
+            return VaultActivity(kind: stage == .organizing ? .organizing : .scanning, title: title, detail: detail, progress: progress)
         }
         if input.importing {
             let total = max(0, input.importTotal), completed = max(0, input.importProgress)

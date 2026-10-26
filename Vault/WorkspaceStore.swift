@@ -21,6 +21,8 @@ final class WorkspaceStore: ObservableObject {
     @Published var scanPresentation: ScanPresentation = .configuration
     @Published var activeScan: ScanJob?
     @Published var scanCurrentFile = ""
+    @Published var scanMinimized = false
+    @Published var scanCancellationRequested = false
     var scanIsActive: Bool { activeScan?.stage.isRunning == true && working }
     let organizer = SmartOrganizationService()
     let scanAnalyzer = AnalysisService()
@@ -86,7 +88,7 @@ final class WorkspaceStore: ObservableObject {
             scanExtractText = pendingLocations.allSatisfy(\.extractContent)
             scanIncludeGPS = pendingLocations.allSatisfy { $0.includePhotoLocations == true }
             scanMonitorFolders = pendingLocations.contains { source in !data.locations.contains { $0.id == source.id } }
-            scanPresentation = .configuration; reviewFolder = true
+            scanMinimized = false; scanPresentation = .configuration; reviewFolder = true
         } catch { self.error = "Folder access could not be saved. Select the folders again." }
     }
     private func matchesSource(_ source: ScanLocation, folder: URL, identity: String?) -> Bool {

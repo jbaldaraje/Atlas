@@ -16,6 +16,7 @@ struct FolderScanReview: View {
             case .results: results
             }
         }.padding(24).frame(width: 690)
+            .background { ObservatoryBackground(grid: workspace.scanIsActive) }
             .interactiveDismissDisabled(workspace.scanIsActive)
     }
     private var configuration: some View {
@@ -30,7 +31,7 @@ struct FolderScanReview: View {
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }.frame(maxHeight: 95)
             ScanCategoryPicker(selection: $workspace.scanCategories)
-            Text("File counts and sizes will be measured as files are scanned in batches, with no file-count cap. Hidden files, packages, excluded folders, and symbolic links are skipped. All file types can be cataloged; previews and text support vary.").font(.caption).foregroundStyle(.secondary)
+            Text("A counting pass measures matching files before batch processing, with no file-count cap. Hidden files, packages, excluded folders, and symbolic links are skipped. All file types can be cataloged; previews and text support vary.").font(.caption).foregroundStyle(.secondary)
             Toggle("Enable / update monitoring for selected folders after scanning", isOn: $workspace.scanMonitorFolders)
             Text("Leave monitoring off to preserve any existing folder monitoring preferences.").font(.caption).foregroundStyle(.secondary)
             Toggle("Extract supported document text locally for topic suggestions", isOn: $workspace.scanExtractText)
@@ -48,14 +49,30 @@ struct FolderScanReview: View {
     }
     private var progress: some View {
         VStack(alignment: .leading, spacing: 18) {
-            HStack { Text("Scanning your folders").font(.title2); Spacer(); ProgressView().controlSize(.small) }
-            if let scan = workspace.activeScan {
-                Text(stageTitle(scan.stage)).font(.headline)
-                Text(workspace.scanCurrentFile).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                scanNumbers(scan)
-                Text("Completed catalog entries are kept if you cancel. No source files are moved or deleted.").font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Text("Scanning your folders").font(.title2.weight(.medium))
+                Spacer()
+                Button { workspace.minimizeScan() } label: { Label("Minimize", systemImage: "arrow.down.right.and.arrow.up.left") }
+                    .help("Keep scanning while you navigate Vault").accessibilityIdentifier("minimizeScan")
             }
-            HStack { Spacer(); Button("Cancel Scan") { workspace.cancelScan() } }
+            if let scan = workspace.activeScan {
+                HStack(spacing: 24) {
+                    ScanRadar(scan: scan)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(workspace.scanCancellationRequested ? "Cancelling safely…" : scan.stage.title).font(.headline)
+                        Text(workspace.scanCurrentFile).font(.caption).foregroundStyle(.secondary).lineLimit(2).truncationMode(.middle)
+                        Label("Local processing · Originals stay in place", systemImage: "checkmark.shield").font(.caption).foregroundStyle(VaultStyle.teal)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }.padding(18).glassSurface(radius: 16, tint: VaultStyle.teal)
+                ScanProgressMeter(scan: scan)
+                scanNumbers(scan)
+                Text("Minimize to keep browsing while scanning continues. Keep Vault open; completed catalog entries are kept if you cancel.").font(.caption).foregroundStyle(.secondary)
+            }
+            HStack {
+                Spacer()
+                Button(workspace.scanCancellationRequested ? "Cancelling…" : "Cancel Scan") { workspace.cancelScan() }
+                    .disabled(workspace.scanCancellationRequested)
+            }
         }.frame(minHeight: 260)
     }
     @ViewBuilder private var results: some View {
@@ -68,7 +85,8 @@ struct FolderScanReview: View {
     }
     private func resultContent(_ scan: ScanJob) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(resultTitle(scan.stage)).font(.title2.weight(.medium))
+            Text(scan.stage == .completed && !scan.errors.isEmpty ? "Scan finished · review issues" : resultTitle(scan.stage)).font(.title2.weight(.medium))
+            ScanProgressMeter(scan: scan, compact: true)
             scanNumbers(scan)
             LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 10) {
                 summary("Catalog files added", scan.addedIDs.count)
@@ -122,15 +140,6 @@ struct FolderScanReview: View {
     }
     private func summary(_ title: String, _ value: Int) -> some View {
         VStack(alignment: .leading, spacing: 4) { Text("\(value)").font(.title3.monospacedDigit()); Text(title).font(.caption).foregroundStyle(.secondary) }
-    }
-    private func stageTitle(_ stage: ScanStage) -> String {
-        switch stage {
-        case .enumerating: "Discovering approved files"
-        case .indexing: "Updating your catalog"
-        case .organizing: "Organizing supported metadata and topics"
-        case .duplicates: "Reviewing possible duplicates"
-        default: "Finishing scan"
-        }
     }
     private func resultTitle(_ stage: ScanStage) -> String {
         switch stage {

@@ -17,11 +17,11 @@ struct StorageReport {
     var allocatedBytes: Int64 { files.reduce(0) { $0 + $1.allocated } }
 }
 actor AnalysisService {
-    func analyze(_ files: [FileItem], hash: Bool) throws -> StorageReport {
+    func analyze(_ files: [FileItem], hash: Bool, progress: (@Sendable (Int, Int) -> Void)? = nil) throws -> StorageReport {
         var report = StorageReport()
         var identities = Set<String>()
         var candidates: [(FileItem, String, Int64, Date?)] = []
-        for file in files {
+        for (index, file) in files.enumerated() {
             try Task.checkCancellation()
             do {
                 let entry = try FileAccessService.withAccess(file) { url -> (FileItem, String, Int64, Date?) in
@@ -34,6 +34,8 @@ actor AnalysisService {
                 }
                 if identities.insert(entry.1).inserted { candidates.append(entry) }
             } catch { report.failedIDs.append(file.id) }
+            // Throttle UI notifications; this pass accounts for unavailable/hard-linked entries too.
+            if index % 64 == 0 || index + 1 == files.count { progress?(index + 1, files.count) }
         }
         let sizes = Dictionary(grouping: candidates, by: { $0.0.size })
         for (file, identity, allocated, modified) in candidates {

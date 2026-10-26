@@ -24,8 +24,44 @@ public struct OrganizationFacts: Codable, Equatable, Sendable {
     }
 }
 public enum ScanStage: String, Codable, Sendable {
-    case enumerating, indexing, organizing, duplicates, completed, cancelled, interrupted, failed
-    public var isRunning: Bool { [.enumerating, .indexing, .organizing, .duplicates].contains(self) }
+    case counting, enumerating, indexing, organizing, duplicates, completed, cancelled, interrupted, failed
+    public var isRunning: Bool { [.counting, .enumerating, .indexing, .organizing, .duplicates].contains(self) }
+    public var title: String {
+        switch self {
+        case .counting: "Counting matching files"
+        case .enumerating: "Discovering approved files"
+        case .indexing: "Updating your catalog"
+        case .organizing: "Connecting your ideas"
+        case .duplicates: "Reviewing possible duplicates"
+        case .completed: "Scan complete"
+        case .cancelled: "Scan cancelled"
+        case .interrupted: "Scan interrupted"
+        case .failed: "Scan needs attention"
+        }
+    }
+}
+
+/// Measured work, not elapsed time. Counting has no percentage until its denominator is known.
+/// The first 95% covers indexing + organization; the last 5% covers catalog duplicate review.
+public struct ScanWorkProgress: Codable, Equatable, Sendable {
+    public var countedEntries = 0
+    public var totalFiles = 0
+    public var countingComplete = false
+    public var indexedFiles = 0
+    public var organizedFiles = 0
+    public var duplicateChecks = 0
+    public var duplicateTotal = 0
+    public init() {}
+
+    public func fraction(stage: ScanStage) -> Double? {
+        if stage == .completed { return 1 }
+        guard countingComplete else { return nil }
+        let fileWork = Double(max(0, indexedFiles)) + Double(max(0, organizedFiles))
+        let fileTotal = Double(max(0, totalFiles)) * 2
+        let files = fileTotal > 0 ? min(1, fileWork / fileTotal) : 0
+        let review = duplicateTotal > 0 ? min(1, Double(max(0, duplicateChecks)) / Double(duplicateTotal)) : 0
+        return min(0.99, max(0, files * 0.95 + review * 0.05))
+    }
 }
 public struct ScanJob: Identifiable, Codable, Equatable, Sendable {
     public var id = UUID()
@@ -45,7 +81,14 @@ public struct ScanJob: Identifiable, Codable, Equatable, Sendable {
     public var photoLocationGroups = 0
     public var possibleDuplicateGroups: Int?
     public var reviewIDs: Set<UUID> = []
+    /// Optional so saved jobs from earlier releases still decode.
+    public var progress: ScanWorkProgress?
     public init(sources: [ScanLocation]) { self.sources = sources }
+    public var fractionCompleted: Double? {
+        if stage == .completed { return 1 }
+        return progress?.fraction(stage: stage)
+    }
+    public var percentCompleted: Int? { fractionCompleted.map { min(stage == .completed ? 100 : 99, Int(($0 * 100).rounded(.down))) } }
 }
 public struct OrganizationCounts: Sendable {
     public init() {}

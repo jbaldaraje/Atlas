@@ -24,6 +24,7 @@ struct VaultMascotPanel: View {
         input.secureSelected = secureSection; input.secureUnlocked = secure.unlocked
         input.scanStage = workspace.scanIsActive ? workspace.activeScan?.stage : nil
         input.discovered = workspace.activeScan?.discovered ?? 0; input.processed = workspace.activeScan?.processed ?? 0
+        if workspace.scanIsActive { input.scanProgress = workspace.activeScan?.fractionCompleted }
         input.importing = library.busy && !workspace.monitoringActive && !notes.working; input.importProgress = library.progress; input.importTotal = library.total
         input.monitoring = workspace.monitoringActive; input.working = workspace.working || notes.working; input.processingLabel = notes.working ? notes.stage : workspace.processingLabel
         input.activeFolders = workspace.data.locations.filter { !$0.paused }.count
