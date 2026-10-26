@@ -13,7 +13,7 @@ Static checks passed after the expanded implementation:
 - App Sandbox, user-selected read/write capability, and app-scoped bookmark configuration; no network client entitlement. Original index bookmarks explicitly request read-only access.
 - `git diff --check` returned success. All source deliverables are untracked new files in the initially empty, unborn repository, so this is not a tracked-diff review.
 
-Validation parsers were installed from PyPI into `/tmp` and are not app dependencies. The repository's own automated tests are **14 domain/package test methods and 9 macOS integration test methods**; all are currently **unrun**. Syntax parser checks are not substitutes for them.
+Validation parsers were installed from PyPI into `/tmp` and are not app dependencies. The repository's own automated tests are **17 domain/package test methods and 10 macOS integration test methods**; all are currently **unrun**. Syntax parser checks are not substitutes for them.
 
 ## Required next validation
 
@@ -34,3 +34,11 @@ Project inspection passed: all references resolve, all three core sources belong
 ## WorkspaceView type-checking decomposition
 
 A macOS compiler reported a type-checking timeout at WorkspaceView.body. The single expression previously combined navigation, conditional workspaces, inspector, toolbar, observers, drop handling, multiple alerts, sheets, and confirmation dialogs. These now have separate opaque-view boundaries, a typed workspace switch, explicit Boolean bindings, and ordinary action handlers. The nested library grid, row menus, and empty state are also checked independently. Selection and file-operation semantics remain the same. Syntax parsing passes for all 29 Swift files; the macOS compiler timeout fix has not been verified with Xcode in this Linux instance.
+
+## Scan file-category filtering
+
+Folder review now offers multi-select Documents, PDFs, Images, Media, and Other, plus All Types/None controls. Counts, matching logical bytes, and candidate rows update with the selection. Saved locations persist optional category sets, with missing fields defaulting to all types for older metadata. Category filtering applies to future polling as well as initial indexing; stale scan results are rejected when the saved category set changes before synchronization. Previously indexed files are preserved.
+
+Added three domain tests for classification (including uppercase extensions, PDF/document separation, audio/video, and unknown/extensionless types), legacy metadata decoding, and category-set persistence including explicit none. Added a native scanner integration test for category selection, all/none behavior, hidden files, and symlink exclusion using disposable fixtures. These tests are written but remain unrun because Swift/Xcode are unavailable here. The folder enumerator is now in FileAccessService so its actual filesystem behavior can be tested by the existing native target.
+
+Manual acceptance on macOS: approve a disposable folder containing mixed formats; select PDFs plus Documents and confirm only those rows/counts/bytes remain; approve and verify the library. Add matching and nonmatching files and observe polling. Restart and verify saved category choices. Change File Types to Images and confirm new images are added, new nonimages are skipped, and existing documents remain. Verify All Types, no selected types (confirmation disabled), no matches (future monitoring allowed), and cancelled review.

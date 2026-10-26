@@ -7,6 +7,11 @@ struct ImportCandidate: Identifiable {
     let url: URL
     let size: Int64
     let type: String
+    let category: ScanFileCategory
+    init(url: URL, size: Int64, type: String, category: ScanFileCategory? = nil) {
+        self.url = url; self.size = size; self.type = type
+        self.category = category ?? ScanFileCategory.classify(fileExtension: type.isEmpty ? url.pathExtension : type)
+    }
 }
 struct ImportReport {
     var items: [FileItem] = []
@@ -25,10 +30,45 @@ struct FileAccessService: Sendable {
                 defer { if access { url.stopAccessingSecurityScopedResource() } }
                 let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentTypeKey])
                 guard values.isRegularFile == true, values.isSymbolicLink != true else { throw AccessError.regularFilesOnly }
-                return ImportCandidate(url: url, size: Int64(values.fileSize ?? 0), type: values.contentType?.preferredFilenameExtension ?? url.pathExtension)
+                return ImportCandidate(url: url, size: Int64(values.fileSize ?? 0), type: values.contentType?.preferredFilenameExtension ?? url.pathExtension, category: category(for: url, contentType: values.contentType))
             }
         }
         return try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })
+    }
+    static func scanFolder(_ bookmark: Data, excludes: [String], categories: Set<ScanFileCategory> = ScanFileCategory.all) async throws -> [ImportCandidate] {
+        let worker = Task.detached(priority: .utility) {
+            var stale = false
+            let folder = try URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale)
+            guard !stale else { throw FileAccessService.AccessError.staleBookmark }
+            let access = folder.startAccessingSecurityScopedResource()
+            defer { if access { folder.stopAccessingSecurityScopedResource() } }
+            var traversalError: Error?
+            guard let enumerator = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles, .skipsPackageDescendants], errorHandler: { _, error in traversalError = error; return false }) else { throw CocoaError(.fileReadNoPermission) }
+            var urls: [URL] = []
+            for case let url as URL in enumerator {
+                try Task.checkCancellation()
+                let relative = String(url.path.dropFirst(folder.path.count + 1))
+                if excludes.contains(where: { relative == $0 || relative.hasPrefix($0 + "/") }) { enumerator.skipDescendants(); continue }
+                let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+                if values.isSymbolicLink == true { enumerator.skipDescendants(); continue }
+                if values.isRegularFile == true { urls.append(url) }
+                guard urls.count <= 10_000 else { throw ScanError.tooManyFiles }
+            }
+            if let traversalError { throw traversalError }
+            let inspected = try await FileAccessService.inspect(urls)
+            return inspected.filter { categories.contains($0.category) }
+        }
+        return try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })
+    }
+
+    private static func category(for url: URL, contentType: UTType?) -> ScanFileCategory {
+        let byExtension = ScanFileCategory.classify(fileExtension: url.pathExtension)
+        guard byExtension == .other, let contentType else { return byExtension }
+        if contentType.conforms(to: .pdf) { return .pdf }
+        if contentType.conforms(to: .image) { return .images }
+        if contentType.conforms(to: .movie) || contentType.conforms(to: .audio) { return .media }
+        if contentType.conforms(to: .text) || contentType.conforms(to: .presentation) || contentType.conforms(to: .spreadsheet) { return .documents }
+        return .other
     }
     static func run(_ candidates: [ImportCandidate], copy: Bool, managedDirectory: URL, existingPaths: Set<String>, progress: (@Sendable (Int, Int) -> Void)? = nil) async -> ImportReport {
         let worker = Task.detached(priority: .userInitiated) {
@@ -87,6 +127,10 @@ struct FileAccessService: Sendable {
         defer { if access { url.stopAccessingSecurityScopedResource() } }
         guard FileManager.default.fileExists(atPath: url.path) else { throw AccessError.missingFile }
         return try await operation(url)
+    }
+    enum ScanError: LocalizedError {
+        case tooManyFiles
+        var errorDescription: String? { "Folder exceeds this build’s 10,000-file limit. Select a smaller folder; no partial scan was accepted." }
     }
     enum AccessError: LocalizedError {
         case regularFilesOnly, copyVerificationFailed, staleBookmark, missingFile

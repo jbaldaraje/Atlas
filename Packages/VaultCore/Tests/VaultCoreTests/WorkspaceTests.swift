@@ -24,4 +24,35 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(decoded, data)
         XCTAssertEqual(decoded.sessions.count, 1)
     }
+    func testScanCategoriesSeparatePDFsDocumentsImagesAndMedia() {
+        let examples: [(String, ScanFileCategory)] = [
+            ("doc", .documents), ("docx", .documents), ("pptx", .documents),
+            ("xlsx", .documents), ("pages", .documents), ("md", .documents),
+            ("PDF", .pdf), (".pdf", .pdf), ("jpg", .images), ("HEIC", .images),
+            ("png", .images), ("mp4", .media), ("mov", .media), ("mp3", .media),
+            ("flac", .media), ("zip", .other), ("unknown", .other), ("", .other)
+        ]
+        for (fileExtension, expected) in examples {
+            XCTAssertEqual(ScanFileCategory.classify(fileExtension: fileExtension), expected, fileExtension)
+        }
+    }
+    func testLegacyScanLocationKeepsAllTypesWhenCategoryFieldIsMissing() throws {
+        let location = ScanLocation(name: "Existing folder", bookmark: Data([1]))
+        let encoded = try JSONEncoder().encode(location)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object.removeValue(forKey: "includedCategories")
+        let decoded = try JSONDecoder().decode(ScanLocation.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertEqual(decoded.fileCategories, ScanFileCategory.all)
+    }
+    func testScanCategorySelectionsSurvivePersistenceIncludingExplicitNone() throws {
+        var location = ScanLocation(name: "Study", bookmark: Data([1]))
+        location.includedCategories = [.documents, .pdf]
+        var decoded = try JSONDecoder().decode(ScanLocation.self, from: JSONEncoder().encode(location))
+        XCTAssertEqual(decoded.fileCategories, [.documents, .pdf])
+        XCTAssertFalse(decoded.fileCategories.contains(.images))
+        location.includedCategories = []
+        decoded = try JSONDecoder().decode(ScanLocation.self, from: JSONEncoder().encode(location))
+        XCTAssertTrue(decoded.fileCategories.isEmpty)
+    }
+
 }
