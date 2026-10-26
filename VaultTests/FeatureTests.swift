@@ -1,5 +1,6 @@
 import XCTest
 import CryptoKit
+import LocalAuthentication
 import VaultCore
 
 final class FeatureTests: XCTestCase {
@@ -87,4 +88,103 @@ final class SecurePersistenceTests: XCTestCase {
         store.lock()
         XCTAssertFalse(store.unlocked)
     }
+}
+
+/// No real Keychain or biometric prompts: exercise the store's actual async state transitions.
+@MainActor
+final class SecureUnlockTests: XCTestCase {
+    private final class AuthenticationGate {
+        let started = XCTestExpectation(description: "Authentication requested")
+        var continuation: CheckedContinuation<Void, Error>?
+        func authenticate(_ context: LAContext) async throws {
+            try await withCheckedThrowingContinuation { continuation in
+                self.continuation = continuation
+                started.fulfill()
+            }
+        }
+        func succeed() { continuation?.resume(); continuation = nil }
+    }
+    private func fixtureURL() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("records.aesgcm")
+    }
+    func testAuthenticationPanelFocusLossDoesNotCancelUnlock() async throws {
+        let gate = AuthenticationGate(), url = fixtureURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let key = SymmetricKey(size: .bits256)
+        let store = SecureStore(url: url, authenticate: gate.authenticate, keyAccess: { _, _ in key }, applicationIsActive: { true }, observeSystemEvents: false)
+        store.unlock()
+        await fulfillment(of: [gate.started], timeout: 2)
+        store.applicationDeactivated()
+        XCTAssertTrue(store.authenticating)
+        XCTAssertFalse(store.unlocked)
+        gate.succeed()
+        await store.waitForUnlock()
+        XCTAssertTrue(store.unlocked)
+        XCTAssertNil(store.error)
+        store.applicationDeactivated()
+        XCTAssertFalse(store.unlocked)
+        XCTAssertTrue(store.records.isEmpty)
+    }
+    func testExplicitLockCancelsPendingAuthenticationAndPreventsKeyAccess() async throws {
+        let gate = AuthenticationGate(), url = fixtureURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        var keyAccessed = false
+        let store = SecureStore(url: url, authenticate: gate.authenticate, keyAccess: { _, _ in
+            keyAccessed = true; return SymmetricKey(size: .bits256)
+        }, applicationIsActive: { true }, observeSystemEvents: false)
+        store.unlock()
+        await fulfillment(of: [gate.started], timeout: 2)
+        store.lock()
+        gate.succeed()
+        await store.waitForUnlock()
+        XCTAssertFalse(keyAccessed)
+        XCTAssertFalse(store.unlocked)
+        XCTAssertTrue(store.records.isEmpty)
+        XCTAssertNil(store.error)
+    }
+    func testMissingKeyPreservesEncryptedRecordFile() async throws {
+        let url = fixtureURL(), key = SymmetricKey(size: .bits256)
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        try EncryptedRecordRepository(url: url).save([SecureRecord(title: "fixture", username: "", secret: "private", note: "")], key: key)
+        let before = try Data(contentsOf: url)
+        let store = SecureStore(url: url, authenticate: { _ in }, keyAccess: { _, exists in
+            XCTAssertTrue(exists); throw SecureStore.UnlockError.missingKey
+        }, applicationIsActive: { true }, observeSystemEvents: false)
+        store.unlock(); await store.waitForUnlock()
+        XCTAssertFalse(store.unlocked)
+        XCTAssertTrue(store.error?.contains("encryption key was not found") == true)
+        XCTAssertEqual(try Data(contentsOf: url), before)
+    }
+    func testWrongKeyFailsWithoutExposingOrReplacingRecords() async throws {
+        let url = fixtureURL(), key = SymmetricKey(size: .bits256)
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        try EncryptedRecordRepository(url: url).save([SecureRecord(title: "fixture", username: "", secret: "private", note: "")], key: key)
+        let before = try Data(contentsOf: url)
+        let store = SecureStore(url: url, authenticate: { _ in }, keyAccess: { _, _ in SymmetricKey(size: .bits256) }, applicationIsActive: { true }, observeSystemEvents: false)
+        store.unlock(); await store.waitForUnlock()
+        XCTAssertFalse(store.unlocked)
+        XCTAssertTrue(store.records.isEmpty)
+        XCTAssertTrue(store.error?.contains("could not be read or authenticated") == true)
+        XCTAssertEqual(try Data(contentsOf: url), before)
+    }
+    func testUserCancellationLeavesVaultLockedWithoutGenericFailure() async {
+        let store = SecureStore(url: fixtureURL(), authenticate: { _ in
+            throw NSError(domain: LAError.errorDomain, code: LAError.Code.userCancel.rawValue)
+        }, keyAccess: { _, _ in XCTFail("Cancelled authentication must not access the key"); return SymmetricKey(size: .bits256) }, applicationIsActive: { true }, observeSystemEvents: false)
+        store.unlock(); await store.waitForUnlock()
+        XCTAssertFalse(store.unlocked)
+        XCTAssertNil(store.error)
+    }
+    func testInactiveApplicationNeverReceivesUnlockedRecords() async {
+        var keyAccessed = false
+        let store = SecureStore(url: fixtureURL(), authenticate: { _ in }, keyAccess: { _, _ in
+            keyAccessed = true; return SymmetricKey(size: .bits256)
+        }, applicationIsActive: { false }, observeSystemEvents: false)
+        store.unlock(); await store.waitForUnlock()
+        XCTAssertFalse(keyAccessed)
+        XCTAssertFalse(store.unlocked)
+        XCTAssertTrue(store.records.isEmpty)
+        XCTAssertTrue(store.error?.contains("did not regain focus") == true)
+    }
+
 }

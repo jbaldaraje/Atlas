@@ -15,7 +15,7 @@ cd Packages/VaultCore
 swift test
 ```
 
-The package contains **17 tests**; the Xcode integration target contains **10 tests**. They have been written but **not executed** here. This Linux machine has neither Swift nor the macOS SDK. [macOS CI](.github/workflows/macos.yml) is provided but has not run. Unsigned CLI builds cannot validate signed sandbox behavior.
+The package contains **17 tests**; the Xcode integration target contains **16 tests**. They have been written but **not executed** here. This Linux machine has neither Swift nor the macOS SDK. [macOS CI](.github/workflows/macos.yml) is provided but has not run. Unsigned CLI builds cannot validate signed sandbox behavior.
 
 ## If Xcode reports “Unable to find module dependency: VaultCore”
 
@@ -32,6 +32,12 @@ xcodebuild -project Vault.xcodeproj -scheme Vault \
 ```
 
 That unsigned command checks compilation; use the signed Xcode Run workflow for normal app execution. If it fails, inspect the first error in the VaultCore build rather than only later import errors.
+
+## If the Touch ID prompt closes before Secure Vault unlocks
+
+Update to the latest source, rebuild, and run the signed app from Xcode. The unlock flow now tolerates temporary focus changes caused by the system authentication panel while keeping the vault locked. It waits for Vault to regain focus before showing any records. Locking manually, navigating away, sleeping, or changing the login session still cancels the attempt. Cancel Unlock is available while authentication is pending.
+
+If it still fails, report the exact message shown. Keychain failures now include their status code and distinguish signing/access problems, missing keys, and unreadable ciphertext. Keep the same signing team and bundle identifier used to create the vault. Do not delete `records.aesgcm` or Keychain items to troubleshoot: losing the key can make existing records unrecoverable.
 
 ## Use the workspaces
 

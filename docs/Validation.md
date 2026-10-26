@@ -13,7 +13,7 @@ Static checks passed after the expanded implementation:
 - App Sandbox, user-selected read/write capability, and app-scoped bookmark configuration; no network client entitlement. Original index bookmarks explicitly request read-only access.
 - `git diff --check` returned success. All source deliverables are untracked new files in the initially empty, unborn repository, so this is not a tracked-diff review.
 
-Validation parsers were installed from PyPI into `/tmp` and are not app dependencies. The repository's own automated tests are **17 domain/package test methods and 10 macOS integration test methods**; all are currently **unrun**. Syntax parser checks are not substitutes for them.
+Validation parsers were installed from PyPI into `/tmp` and are not app dependencies. The repository's own automated tests are **17 domain/package test methods and 16 macOS integration test methods**; all are currently **unrun**. Syntax parser checks are not substitutes for them.
 
 ## Required next validation
 
@@ -42,3 +42,11 @@ Folder review now offers multi-select Documents, PDFs, Images, Media, and Other,
 Added three domain tests for classification (including uppercase extensions, PDF/document separation, audio/video, and unknown/extensionless types), legacy metadata decoding, and category-set persistence including explicit none. Added a native scanner integration test for category selection, all/none behavior, hidden files, and symlink exclusion using disposable fixtures. These tests are written but remain unrun because Swift/Xcode are unavailable here. The folder enumerator is now in FileAccessService so its actual filesystem behavior can be tested by the existing native target.
 
 Manual acceptance on macOS: approve a disposable folder containing mixed formats; select PDFs plus Documents and confirm only those rows/counts/bytes remain; approve and verify the library. Add matching and nonmatching files and observe polling. Restart and verify saved category choices. Change File Types to Images and confirm new images are added, new nonimages are skipped, and existing documents remain. Verify All Types, no selected types (confirmation disabled), no matches (future monitoring allowed), and cancelled review.
+
+## Secure Vault authentication focus repair
+
+The reported system authentication prompt closing matches a source-level race: the application-deactivation observer called lock() even while the vault was locked and awaiting authentication, invalidating the LAContext used by the prompt. Deactivation now cancels/clears an unlocked vault as before, but does not cancel a locked authentication attempt. Unlock waits briefly for foreground activation, checking cancellation and its generation token, before acquiring a key and again before publishing records. Explicit lock, sleep, session resignation, and navigation remain unconditional cancellation paths. The UI provides Cancel Unlock. Error messages now distinguish LocalAuthentication cancellation/interruption, signing/Keychain status, missing key, and unreadable/authentication-failed record data. No record or key is deleted/reset as a repair.
+
+Key access now requests the macOS data-protection Keychain for new user-presence-protected keys, with a legacy lookup fallback for existing keys. The app never creates a replacement when ciphertext exists without an accessible key. These native API changes require signed macOS runtime validation.
+
+Six injected-dependency tests were added against SecureStore's actual async unlock flow, without a real Keychain/biometric prompt: authentication focus loss, explicit lock before authentication completes, missing-key ciphertext preservation, wrong-key ciphertext preservation, user cancellation, and inactive-app refusal. Static syntax/project checks pass; the tests and real Touch ID/password fallback remain unrun on this Linux host. On macOS, test first enrollment, existing legacy records, repeated unlocks, the system dialog taking focus, cancellation, switching apps while unlocked, sleep during authentication, and navigation during authentication. Verify no records appear while Vault is inactive.

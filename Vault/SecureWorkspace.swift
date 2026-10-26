@@ -16,6 +16,7 @@ struct SecureWorkspace: View {
                     Label("Your private space", systemImage: "lock.shield")
                 } description: { Text("Encrypted records are separate from your library. Unlock with Touch ID or your Mac’s authentication fallback. The local Keychain key is device-bound; copying the encrypted file alone is not a recoverable backup.") } actions: {
                     Button(secure.authenticating ? "Authenticating…" : "Unlock") { secure.unlock() }.disabled(secure.authenticating)
+                    if secure.authenticating { Button("Cancel Unlock") { secure.lock() } }
                 }
             } else {
                 HStack { Label("Unlocked · auto-lock after 2 minutes idle", systemImage: "lock.open"); Spacer(); Button("Lock Now") { secure.lock() } }
