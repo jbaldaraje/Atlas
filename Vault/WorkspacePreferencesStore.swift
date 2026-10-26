@@ -23,7 +23,7 @@ final class WorkspacePreferencesStore: ObservableObject {
         writer = WorkspacePreferencesWriter(base: base)
         let url = base.appendingPathComponent("workspace-preferences.json")
         do { if FileManager.default.fileExists(atPath: url.path) { data = try JSONDecoder().decode(WorkspacePreferences.self, from: Data(contentsOf: url)) } }
-        catch { writable = false; error = "Dashboard and exploration preferences could not be read. The saved file was preserved; writes are disabled until it is repaired." }
+        catch { writable = false; self.error = "Dashboard and exploration preferences could not be read. The saved file was preserved; writes are disabled until it is repaired." }
     }
     func change(_ body: (inout WorkspacePreferences) -> Void) {
         guard writable else { return }
