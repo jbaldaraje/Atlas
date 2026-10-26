@@ -1,0 +1,24 @@
+import SwiftUI
+
+@main
+struct VaultApp: App {
+    @AppStorage("appearance") private var appearance = "dark"
+    @StateObject private var store = LibraryStore()
+    @StateObject private var workspace = WorkspaceStore()
+    @StateObject private var secure = SecureStore()
+    @StateObject private var trash = NativeTrashService()
+    var body: some Scene {
+        WindowGroup {
+            WorkspaceView().environmentObject(store).environmentObject(workspace).environmentObject(secure).environmentObject(trash)
+                .frame(minWidth: 1000, minHeight: 680)
+                .preferredColorScheme(appearance == "system" ? nil : appearance == "dark" ? .dark : .light)
+        }
+        .defaultSize(width: 1400, height: 900)
+        .commands {
+            CommandGroup(after: .newItem) {
+                Button("Add Files…") { store.chooseFiles() }.keyboardShortcut("i", modifiers: [.command])
+            }
+        }
+        Settings { PreferencesView().padding(28).frame(width: 440).preferredColorScheme(appearance == "system" ? nil : appearance == "dark" ? .dark : .light) }
+    }
+}

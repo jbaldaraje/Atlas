@@ -1,0 +1,28 @@
+name: macOS validation
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  build-and-test:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Toolchain
+        run: xcodebuild -version && swift --version
+      - name: Domain tests
+        working-directory: Packages/VaultCore
+        run: swift test
+      - name: Application build
+        run: xcodebuild -project Vault.xcodeproj -scheme Vault -destination 'platform=macOS' -derivedDataPath "$RUNNER_TEMP/VaultDerivedData" build CODE_SIGNING_ALLOWED=NO
+      - name: Filesystem and encryption tests
+        run: xcodebuild -project Vault.xcodeproj -scheme Vault -destination 'platform=macOS' -derivedDataPath "$RUNNER_TEMP/VaultDerivedData" -resultBundlePath "$RUNNER_TEMP/VaultTests.xcresult" test CODE_SIGNING_ALLOWED=NO
+      - name: Preserve test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macOS-test-results
+          path: ${{ runner.temp }}/VaultTests.xcresult
+          if-no-files-found: ignore
