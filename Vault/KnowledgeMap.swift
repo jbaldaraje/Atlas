@@ -20,6 +20,7 @@ struct KnowledgeMap: View {
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var model: KnowledgeMapModel
+    @AppStorage("fileKindFilter") private var fileKind = FileKindFilter.all
     @Binding var selectedID: UUID?
     let select: (UUID) -> Void
     @State private var page = 0
@@ -49,6 +50,7 @@ struct KnowledgeMap: View {
         query.text = self.query; query.selectedID = selectedID
         query.subjects = showSubjects; query.collections = showCollections; query.membership = showMembership
         query.focus = focusMode; query.page = page
+        query.kind = fileKind
         return GraphRequest(revision: GraphRevision(library: store.graphRevision, workspace: workspace.graphRevision), query: query)
     }
     private var selectedNodeID: UUID? { model.projection.selectedExists ? selectedID : nil }
@@ -92,6 +94,7 @@ struct KnowledgeMap: View {
         .onAppear { applyProjection() }
         .onChange(of: model.generation) { _, _ in applyProjection() }
         .onChange(of: query) { _, _ in page = 0 }
+        .onChange(of: fileKind) { _, _ in page = 0 }
         .onChange(of: showSubjects) { _, _ in page = 0 }
         .onChange(of: showCollections) { _, _ in page = 0 }
         .onChange(of: showMembership) { _, _ in page = 0 }
@@ -284,7 +287,7 @@ struct KnowledgeMap: View {
         }.padding(24).frame(width: 440)
     }
     private var relationshipCandidates: [FileItem] {
-        Array(store.library.files.lazy.filter { $0.id != selectedID && (relatedSearch.isEmpty || $0.filename.localizedCaseInsensitiveContains(relatedSearch)) }.prefix(50))
+        Array(store.library.files.lazy.filter { $0.id != selectedID && fileKind.includes(fileExtension: $0.type) && (relatedSearch.isEmpty || $0.filename.localizedCaseInsensitiveContains(relatedSearch)) }.prefix(50))
     }
     private func performFileAction(_ id: UUID, action: (FileItem) -> Void) {
         if let file = store.library.files.first(where: { $0.id == id }) { action(file) }

@@ -2,7 +2,7 @@ import AppKit
 import Combine
 import VaultCore
 
-struct TrashEntry: Identifiable, Codable {
+struct TrashEntry: Identifiable, Codable, Sendable {
     let id: UUID
     let file: FileItem
     let deletedAt: Date
@@ -12,7 +12,8 @@ struct TrashEntry: Identifiable, Codable {
 /// Native Trash operations require a fresh, explicit writable grant for the exact file.
 @MainActor
 final class NativeTrashService: ObservableObject {
-    @Published private(set) var entries: [TrashEntry] = []
+    private(set) var listingRevision = UUID()
+    @Published private(set) var entries: [TrashEntry] = [] { didSet { listingRevision = UUID() } }
     @Published var error: String?
     private let root = URL.applicationSupportDirectory.appendingPathComponent("Vault/TrashRecords")
     init() { refresh() }

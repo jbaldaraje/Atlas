@@ -23,7 +23,7 @@ struct ContextInspector: View {
                         Text(subject.description.isEmpty ? "No description yet. Edit this subject in the Subjects workspace." : subject.description).font(.callout).foregroundStyle(.secondary)
                         if let date = subject.deadline { Label(date.formatted(date: .abbreviated, time: .shortened), systemImage: "calendar").font(.caption) }
                         Divider(); Text("Linked files").font(.headline)
-                        Text("\(subject.fileIDs.count.formatted()) linked files").font(.caption).foregroundStyle(.secondary)
+                        Text("\(subject.fileIDs.count.formatted()) total linked files").font(.caption).foregroundStyle(.secondary)
                         Button("Browse linked folders") { browseSubject(subject.id) }
                         Divider(); Text("Recorded study").font(.headline)
                         let sessions = workspace.data.sessions.filter { $0.subjectID == subject.id }

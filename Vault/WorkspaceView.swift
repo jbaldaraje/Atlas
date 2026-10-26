@@ -32,6 +32,7 @@ struct WorkspaceView: View {
     @AppStorage("cinematicMotion") private var cinematicMotion = true
     @State private var showingNotesImport = false
     @StateObject private var graphModel = KnowledgeMapModel()
+    @AppStorage("fileKindFilter") private var fileKind = FileKindFilter.all
     @State private var section: Section? = .overview
     @State private var columns: NavigationSplitViewVisibility = .all
     @State private var showInspector = false
@@ -82,7 +83,7 @@ struct WorkspaceView: View {
     private var selectedWorkspace: some View {
         switch currentSection {
         case .overview:
-            OverviewWorkspace(select: inspect, openMap: openMap, openCollection: openCollection, addNotes: { showingNotesImport = true })
+            OverviewWorkspace(select: inspect, openMap: openMap, openSubjects: openAllSubjects, openCollections: openAllCollections, addNotes: { showingNotesImport = true })
         case .notes:
             NotesWorkspace(query: query, select: inspect, addNotes: { showingNotesImport = true })
         case .graph:
@@ -150,6 +151,7 @@ struct WorkspaceView: View {
             .onChange(of: store.openedEvent) { _, event in recordOpenedFile(event) }
             .onChange(of: store.library.files) { old, files in reconcileFiles(old: old, files: files) }
             .onChange(of: section) { _, next in changeSection(next) }
+            .onChange(of: fileKind) { _, _ in selectedIDs = []; selectedID = nil; showInspector = false }
             .dropDestination(for: URL.self) { urls, _ in acceptDroppedFiles(urls) }
     }
 
@@ -228,6 +230,8 @@ struct WorkspaceView: View {
     }
 
     private func openMap() { section = .graph }
+    private func openAllSubjects() { subjectID = nil; subjectRoute = UUID(); section = .subjects }
+    private func openAllCollections() { collectionID = nil; collectionRoute = UUID(); section = .collections }
     private func openSubject(_ id: UUID) { subjectID = id; subjectRoute = UUID(); section = .subjects }
     private func openCollection(_ id: UUID) { collectionID = id; collectionRoute = UUID(); section = .collections }
     private func requestRemoval(_ file: FileItem) { removing = file }
@@ -300,6 +304,12 @@ struct WorkspaceView: View {
         }.background { ObservatoryBackground(grid: false) }.navigationSplitViewColumnWidth(min: 195, ideal: 210, max: 260)
     }
     private var header: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            headerLine
+            if currentSection != .secure { FileKindPicker() }
+        }.padding(.horizontal, 24).padding(.vertical, 16)
+    }
+    private var headerLine: some View {
         HStack(spacing: 12) {
             Image(systemName: section?.symbol ?? "square.grid.2x2").foregroundStyle(accent)
             Text(section?.rawValue ?? "Overview").font(.system(size: 16, weight: .medium))
@@ -316,7 +326,7 @@ struct WorkspaceView: View {
             } else if !workspace.data.locations.filter({ !$0.paused }).isEmpty {
                 Label("\(workspace.data.locations.filter { !$0.paused }.count) monitored", systemImage: "arrow.triangle.2.circlepath").font(.caption).foregroundStyle(.secondary)
             }
-        }.padding(.horizontal, 24).padding(.vertical, 16)
+        }
     }
     private var scanStatusLabel: String {
         guard let percent = workspace.activeScan?.percentCompleted else { return "Scan · counting…" }

@@ -27,6 +27,7 @@ public struct CatalogQuery: Equatable, Sendable {
     public var text = ""
     public var favorites = false
     public var type = ""
+    public var kind = FileKindFilter.all
     public var minimumBytes: Int64 = 0
     public var recent = false
     public var old = false
@@ -73,7 +74,7 @@ public struct CatalogSnapshot: Sendable {
 
 /// A local metadata index. Opening a parent never enumerates disk or materializes child views.
 public struct CatalogIndex: Sendable {
-    private struct Entry: Sendable { let file: FileItem; let parent: String; let root: String }
+    private struct Entry: Sendable { let file: FileItem; let parent: String; let root: String; let category: ScanFileCategory }
     private let snapshot: CatalogSnapshot
     private var entries: [Entry] = []
     private var months: [UUID: (added: String, modified: String?)] = [:]
@@ -103,7 +104,7 @@ public struct CatalogIndex: Sendable {
             let parent = Self.parent(file.originalLocation)
             var root = parent
             while !roots.contains(root) && root != "/" { root = Self.parent(root) }
-            entries.append(Entry(file: file, parent: parent, root: root))
+            entries.append(Entry(file: file, parent: parent, root: root, category: ScanFileCategory.classify(fileExtension: file.type)))
             months[file.id] = (Self.month(file.indexedAt, calendar), file.modifiedAt.map { Self.month($0, calendar) })
         }
     }
@@ -121,10 +122,11 @@ public struct CatalogIndex: Sendable {
         for (index, entry) in entries.enumerated() {
             if index % 256 == 0 { try Task.checkCancellation() }
             let file = entry.file
+            if !query.kind.includes(category: entry.category) { continue }
             if let id = query.location.subjectID, subject?.id != id || subject?.fileIDs.contains(file.id) != true { continue }
             if let id = query.location.collectionID, !file.collectionIDs.contains(id) { continue }
             if query.section == .media {
-                let category = ScanFileCategory.classify(fileExtension: file.type)
+                let category = entry.category
                 if category != .images && category != .media { continue }
             }
             if query.section == .notes {
@@ -155,7 +157,10 @@ public struct CatalogIndex: Sendable {
                 try Task.checkCancellation()
                 counts[subject.id] = subject.fileIDs.intersection(ids).count
             }
-            let groups = snapshot.subjects.filter { words.isEmpty || $0.name.localizedCaseInsensitiveContains(query.text) || (counts[$0.id] ?? 0) > 0 }.map { subject -> CatalogGroup in
+            let groups = snapshot.subjects.filter {
+                (query.kind == .all || query.linkingFileID != nil || (counts[$0.id] ?? 0) > 0) &&
+                (words.isEmpty || $0.name.localizedCaseInsensitiveContains(query.text) || (counts[$0.id] ?? 0) > 0)
+            }.map { subject -> CatalogGroup in
                 var location = query.location; location.subjectID = subject.id
                 var group = CatalogGroup(id: "subject:" + subject.id.uuidString, title: subject.name, subtitle: subject.description, count: counts[subject.id] ?? 0, symbol: "books.vertical", location: location)
                 group.linked = query.linkingFileID.map { subject.fileIDs.contains($0) } ?? false
@@ -167,7 +172,10 @@ public struct CatalogIndex: Sendable {
             var counts: [UUID: Int] = [:]
             for entry in matches { for id in entry.file.collectionIDs { counts[id, default: 0] += 1 } }
             let membership = query.linkingFileID.flatMap { id in snapshot.library.files.first { $0.id == id } }?.collectionIDs ?? []
-            let groups = snapshot.library.collections.filter { words.isEmpty || $0.name.localizedCaseInsensitiveContains(query.text) || (counts[$0.id] ?? 0) > 0 }.map { collection -> CatalogGroup in
+            let groups = snapshot.library.collections.filter {
+                (query.kind == .all || query.linkingFileID != nil || (counts[$0.id] ?? 0) > 0) &&
+                (words.isEmpty || $0.name.localizedCaseInsensitiveContains(query.text) || (counts[$0.id] ?? 0) > 0)
+            }.map { collection -> CatalogGroup in
                 var location = query.location; location.collectionID = collection.id
                 var group = CatalogGroup(id: "collection:" + collection.id.uuidString, title: collection.name, subtitle: "Virtual collection", count: counts[collection.id] ?? 0, symbol: "square.stack", location: location)
                 group.linked = membership.contains(collection.id)
@@ -196,11 +204,13 @@ public struct CatalogIndex: Sendable {
         }
         if query.section == .timeline {
             let sessions = snapshot.sessions.filter { session in
+                query.kind == .all && (
                 words.isEmpty || [session.note, subjectNames[session.subjectID] ?? ""].contains { $0.localizedCaseInsensitiveContains(query.text) }
+                )
             }
             if query.location.event == nil {
                 let counts = [matches.count, matches.filter { $0.file.modifiedAt != nil }.count, sessions.count]
-                let groups = zip(CatalogEvent.allCases, counts).map { event, count -> CatalogGroup in
+                let groups = zip(CatalogEvent.allCases, counts).filter { query.kind == .all || $0.1 > 0 }.map { event, count -> CatalogGroup in
                     var location = query.location; location.event = event
                     return CatalogGroup(id: event.rawValue, title: event.title, subtitle: "Open to browse months", count: count, symbol: "calendar", location: location)
                 }

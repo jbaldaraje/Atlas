@@ -7,7 +7,8 @@ struct OverviewWorkspace: View {
     @EnvironmentObject private var notes: AppleNotesStore
     let select: (UUID) -> Void
     let openMap: () -> Void
-    let openCollection: (UUID) -> Void
+    let openSubjects: () -> Void
+    let openCollections: () -> Void
     let addNotes: () -> Void
     @State private var showLocations = false
     @State private var showActivity = false
@@ -33,18 +34,9 @@ struct OverviewWorkspace: View {
                     Text("Your parent folders").font(.headline)
                     FolderBrowser(section: .files, listMode: true, select: select).frame(height: 330)
                 }
-                if !workspace.data.subjects.isEmpty || !store.library.collections.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Your spaces").font(.headline)
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 180))], alignment: .leading, spacing: 10) {
-                            ForEach(workspace.data.subjects.prefix(6)) { subject in
-                                Button { select(subject.id) } label: { space(subject.name, subtitle: "\(subject.fileIDs.count) linked files", symbol: "sparkle", color: VaultStyle.teal) }.buttonStyle(.plain)
-                            }
-                            ForEach(store.library.collections.prefix(6)) { collection in
-                                Button { openCollection(collection.id) } label: { space(collection.name, subtitle: "Collection", symbol: "square.stack", color: VaultStyle.amber) }.buttonStyle(.plain)
-                            }
-                        }
-                    }
+                HStack(spacing: 12) {
+                    Button(action: openSubjects) { space("Subjects", subtitle: "Browse matching subject groups", symbol: "books.vertical", color: VaultStyle.teal) }.buttonStyle(.plain)
+                    Button(action: openCollections) { space("Collections", subtitle: "Browse matching collections", symbol: "square.stack", color: VaultStyle.amber) }.buttonStyle(.plain)
                 }
                 DisclosureGroup("Approved locations", isExpanded: $showLocations) { MonitoringWorkspace().padding(.top, 14) }.font(.callout)
                 Label("Only the files and folders you approve. Everything stays on your Mac.", systemImage: "checkmark.shield").font(.caption).foregroundStyle(.secondary)
@@ -58,7 +50,7 @@ struct OverviewWorkspace: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Label("KNOWLEDGE MAP", systemImage: "point.3.connected.trianglepath.dotted").font(.system(size: 9, weight: .semibold)).tracking(1.5).foregroundStyle(VaultStyle.lavender)
                     Text("Follow the connections.").font(.system(size: 20, weight: .medium, design: .rounded))
-                    Text(store.library.files.isEmpty ? "Your map begins with your first file." : "\(store.library.files.count) files. Your own constellation.").font(.caption).foregroundStyle(.secondary)
+                    Text(store.library.files.isEmpty ? "Your map begins with your first file." : "\(store.library.files.count) indexed files in your library.").font(.caption).foregroundStyle(.secondary)
                     Label("Explore your map", systemImage: "arrow.up.right").font(.caption.weight(.medium)).foregroundStyle(VaultStyle.lavender)
                 }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
                 miniNetwork.frame(width: 200, height: 190).allowsHitTesting(false)

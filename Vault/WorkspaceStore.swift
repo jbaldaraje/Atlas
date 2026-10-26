@@ -8,7 +8,8 @@ final class WorkspaceStore: ObservableObject {
     private(set) var graphRevision = UUID()
     private(set) var browserRevision = UUID()
     @Published var error: String?
-    @Published var recoveryEntries: [RecoveryEntry] = []
+    private(set) var recoveryListingRevision = UUID()
+    @Published var recoveryEntries: [RecoveryEntry] = [] { didSet { recoveryListingRevision = UUID() } }
     private let recovery = RecoveryService()
     @Published var working = false
     @Published private(set) var monitoringActive = false

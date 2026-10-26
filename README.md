@@ -15,7 +15,7 @@ cd Packages/VaultCore
 swift test
 ```
 
-The package contains **45 tests**; the Xcode integration target contains **43 tests**. They have been written but **not executed** here. This Linux machine has neither Swift nor the macOS SDK. [macOS CI](.github/workflows/macos.yml) is provided but has not run. Unsigned CLI builds cannot validate signed sandbox behavior.
+The package contains **52 tests**; the Xcode integration target contains **43 tests**. They have been written but **not executed** here. This Linux machine has neither Swift nor the macOS SDK. [macOS CI](.github/workflows/macos.yml) is provided but has not run. Unsigned CLI builds cannot validate signed sandbox behavior.
 
 ## If Xcode reports “Unable to find module dependency: VaultCore”
 
@@ -72,3 +72,7 @@ Open **Notes → Add iCloud / Apple Notes** (also **Add Notes** on Overview), co
 ## Parent-first navigation for large libraries
 
 All Files, Images & Media, Collections, Subjects, Timeline, Notes, Overview, Storage, and Recently Deleted now present parent folders or groups before individual children. Views render at most 60 children per page and prepare their metadata in the background; Previous/Next reaches the complete current level. No scan/index limit is added. Thumbnail work is queued, cached, and cancelled when leaving file cards. See [behavior, architecture, and required macOS acceptance](docs/FolderBrowsing.md).
+
+## File type filters on file workspaces
+
+Use **All Types / Docs / Media / Photos** in the page header. Docs includes PDFs, text documents, presentations, and spreadsheets; Media is audio/video; Photos is images. The choice persists across tabs and parent-folder navigation, updates matching counts, and keeps paged background browsing. All Types restores archives and other files too. Scan/monitor settings remain independent. See [scope, behavior, and pending native validation](docs/FileTypeFilters.md).

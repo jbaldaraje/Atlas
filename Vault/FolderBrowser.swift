@@ -6,6 +6,7 @@ struct FolderBrowser: View {
     @EnvironmentObject private var store: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
     @StateObject private var model = FolderBrowserModel()
+    @AppStorage("fileKindFilter") private var fileKind = FileKindFilter.all
     let section: CatalogSection
     var query = ""
     var favorites = false
@@ -29,11 +30,13 @@ struct FolderBrowser: View {
     @State private var pageNumber = 0
 
     private var location: CatalogLocation { path.last?.location ?? initialLocation }
+    private var resultKind: FileKindFilter { linkingFileID == nil ? fileKind : .all }
     private var request: CatalogRequest {
         var query = CatalogQuery(); query.section = section; query.location = location
         query.text = self.query; query.favorites = favorites; query.type = type; query.minimumBytes = minimumBytes
         query.recent = recent; query.old = old; query.sort = sort; query.page = pageNumber
         query.linkingFileID = linkingFileID
+        query.kind = resultKind
         return CatalogRequest(dataset: source?.id ?? "library", revision: CatalogRevision(library: source?.revision ?? store.graphRevision, workspace: source?.revision ?? workspace.browserRevision), query: query)
     }
     // Never display the previous folder's children while a different navigation request loads.
@@ -53,7 +56,7 @@ struct FolderBrowser: View {
                 VStack(spacing: 10) { ProgressView(); Text("Preparing this level…").font(.caption).foregroundStyle(.secondary) }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if model.page.itemCount == 0 {
-                ContentUnavailableView("No items at this level", systemImage: "folder", description: Text("Choose another folder or change your filters. Only indexed files are shown."))
+                emptyState
             } else { contents }
             footer
         }
@@ -61,11 +64,21 @@ struct FolderBrowser: View {
         .onChange(of: query) { _, _ in pageNumber = 0 }
         .onChange(of: favorites) { _, _ in pageNumber = 0 }
         .onChange(of: type) { _, _ in pageNumber = 0 }
+        .onChange(of: fileKind) { _, _ in pageNumber = 0 }
         .onChange(of: minimumBytes) { _, _ in pageNumber = 0 }
         .onChange(of: recent) { _, _ in pageNumber = 0 }
         .onChange(of: old) { _, _ in pageNumber = 0 }
         .onChange(of: sort) { _, _ in pageNumber = 0 }
         .onChange(of: initialLocation) { _, _ in path = []; pageNumber = 0 }
+    }
+    private var emptyState: some View {
+        ContentUnavailableView {
+            Label(resultKind == .all ? "No items at this level" : "No \(resultKind.title) at this level", systemImage: "folder")
+        } description: {
+            Text("Choose another parent or change your filters. Only indexed files are shown.")
+        } actions: {
+            if resultKind != .all { Button("Show All Types") { fileKind = .all } }
+        }
     }
     private var breadcrumbs: some View {
         HStack(spacing: 10) {

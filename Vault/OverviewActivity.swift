@@ -6,10 +6,12 @@ private struct ActivityRow: Identifiable, Sendable {
     let file: FileItem
     let date: Date
 }
+private struct ActivityFilterRequest: Equatable { let group: String?; let kind: FileKindFilter }
 struct OverviewActivity: View {
     @EnvironmentObject private var store: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("fileKindFilter") private var fileKind = FileKindFilter.all
     let select: (UUID) -> Void
     @State private var group: String?
     @State private var rows: [ActivityRow] = []
@@ -18,6 +20,7 @@ struct OverviewActivity: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack { Text("Recent activity").font(.title2); Spacer(); Button("Done") { dismiss() } }
+            FileKindPicker()
             if let group {
                 Button("Activity Groups") { self.group = nil; rows = [] }
                 Text(group).font(.headline)
@@ -43,16 +46,17 @@ struct OverviewActivity: View {
                 Button { group = "Recently added" } label: { Label("Recently added", systemImage: "folder").padding(18).frame(maxWidth: .infinity, alignment: .leading) }
                 Spacer()
             }
-        }.padding(24).frame(width: 730, height: 540).task(id: group) { await load() }
+        }.padding(24).frame(width: 730, height: 540).task(id: ActivityFilterRequest(group: group, kind: fileKind)) { await load() }
     }
     private func load() async {
         guard let group else { return }
         loading = true; rows = []; page = 0; defer { loading = false }
-        let files = store.library.files, opened = workspace.data.openedFiles ?? [:]
+        let files = store.library.files, opened = workspace.data.openedFiles ?? [:], kind = fileKind
         let worker = Task.detached(priority: .userInitiated) { () throws -> [ActivityRow] in
             var rows: [ActivityRow] = []
             for file in files {
                 try Task.checkCancellation()
+                guard kind.includes(fileExtension: file.type) else { continue }
                 if group == "Recently opened" {
                     if let date = opened[file.id] { rows.append(ActivityRow(file: file, date: date)) }
                 } else { rows.append(ActivityRow(file: file, date: file.indexedAt)) }

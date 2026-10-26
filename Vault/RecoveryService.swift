@@ -1,7 +1,7 @@
 import Foundation
 import VaultCore
 
-struct RecoveryEntry: Identifiable, Codable {
+struct RecoveryEntry: Identifiable, Codable, Sendable {
     let id: UUID
     let file: FileItem
     let date: Date

@@ -24,6 +24,7 @@ public struct GraphQuery: Equatable, Sendable {
     public var membership = true
     public var focus = false
     public var page = 0
+    public var kind = FileKindFilter.all
     public init() {}
 }
 public struct GraphProjection: Sendable {
@@ -89,6 +90,28 @@ public struct KnowledgeGraphIndex: Sendable {
 
     public func project(_ query: GraphQuery) throws -> GraphProjection {
         try Task.checkCancellation()
+        var allowed: Set<UUID>?
+        var matchingSubjectCounts: [UUID: Int] = [:]
+        if query.kind != .all {
+            var documents = Set<UUID>()
+            for node in nodes {
+                try Task.checkCancellation()
+                if node.kind == .document && query.kind.includes(fileExtension: node.type) { documents.insert(node.id) }
+            }
+            var relevant = documents
+            for edge in edges {
+                try Task.checkCancellation()
+                if documents.contains(edge.source), let index = byID[edge.target], nodes[index].kind != .document {
+                    relevant.insert(edge.target)
+                    if edge.membership && nodes[index].kind == .subject { matchingSubjectCounts[edge.target, default: 0] += 1 }
+                }
+                if documents.contains(edge.target), let index = byID[edge.source], nodes[index].kind != .document {
+                    relevant.insert(edge.source)
+                    if edge.membership && nodes[index].kind == .subject { matchingSubjectCounts[edge.source, default: 0] += 1 }
+                }
+            }
+            allowed = relevant
+        }
         var related = Set<UUID>()
         if let selected = query.selectedID, byID[selected] != nil {
             related.insert(selected)
@@ -102,6 +125,7 @@ public struct KnowledgeGraphIndex: Sendable {
         let text = query.text.trimmingCharacters(in: .whitespacesAndNewlines)
         for (index, node) in nodes.enumerated() {
             if index % 256 == 0 { try Task.checkCancellation() }
+            if let allowed, !allowed.contains(node.id) { continue }
             guard (node.kind != .subject || query.subjects), (node.kind != .collection || query.collections),
                   (text.isEmpty || node.title.localizedCaseInsensitiveContains(text)), (!query.focus || related.contains(node.id)) else { continue }
             if node.id == query.selectedID { selected.append(index) }
@@ -113,7 +137,11 @@ public struct KnowledgeGraphIndex: Sendable {
         result.selectedExists = query.selectedID.map { byID[$0] != nil } ?? false
         result.page = min(max(0, query.page), result.pageCount - 1)
         let start = result.page * GraphProjection.nodeBudget
-        result.nodes = matches.dropFirst(start).prefix(GraphProjection.nodeBudget).map { nodes[$0] }
+        result.nodes = matches.dropFirst(start).prefix(GraphProjection.nodeBudget).map {
+            let node = nodes[$0]
+            guard query.kind != .all, node.kind == .subject else { return node }
+            return GraphNode(id: node.id, title: node.title, subtitle: "SUBJECT · \(matchingSubjectCounts[node.id] ?? 0) MATCHING FILES", type: node.type, isNote: node.isNote, kind: node.kind, favorite: node.favorite)
+        }
         let visible = Set(result.nodes.map(\.id))
         var visited = Set<Int>()
         for node in result.nodes {

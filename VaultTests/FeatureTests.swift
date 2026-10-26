@@ -571,6 +571,12 @@ final class CatalogBrowserEngineTests: XCTestCase {
         query = CatalogQuery(); query.section = .media
         let media = try await engine.page(CatalogRequest(dataset: "library", revision: revision, query: query), snapshot: source)
         XCTAssertTrue(media.files.isEmpty); XCTAssertEqual(media.groups[0].count, 1)
+        query.kind = .photos
+        let photos = try await engine.page(CatalogRequest(dataset: "library", revision: revision, query: query), snapshot: source)
+        XCTAssertEqual(photos.groups.first?.count, 1)
+        query.section = .files; query.kind = .documents
+        let documents = try await engine.page(CatalogRequest(dataset: "library", revision: revision, query: query), snapshot: source)
+        XCTAssertEqual(documents.groups.first?.count, 1)
         let firstCount = await engine.buildCount; XCTAssertEqual(firstCount, 1)
         let changed = CatalogRevision(library: UUID(), workspace: revision.workspace)
         _ = try await engine.page(CatalogRequest(dataset: "library", revision: changed, query: query), snapshot: source)
