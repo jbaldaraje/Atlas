@@ -43,6 +43,9 @@ struct WorkspaceView: View {
     @State private var typeFilter = ""
     @State private var minimumSizeMB = 0.0
     @State private var recentOnly = false
+    @State private var subjectID: UUID?
+    @State private var subjectRoute = UUID()
+    @State private var collectionRoute = UUID()
     @State private var collectionID: UUID?
     @State private var favoritesOnly = false
     @State private var listMode = false
@@ -51,28 +54,6 @@ struct WorkspaceView: View {
     @State private var newCollection = false
     @State private var removing: FileItem?
     private let accent = VaultStyle.lavender
-    private var results: [FileItem] {
-        var files = store.library.search("", collectionID: collectionID, favoritesOnly: favoritesOnly)
-        if !query.isEmpty {
-            let words = query.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-            files = files.filter { file in words.allSatisfy { word in
-                ([file.filename, file.description, workspace.data.extractedText[file.id] ?? ""] + file.tags).contains { $0.localizedCaseInsensitiveContains(word) }
-            } }
-        }
-        if section == .media { files = files.filter { ["jpg", "jpeg", "png", "heic", "gif", "mov", "mp4", "webp", "tiff"].contains($0.type.lowercased()) } }
-        files = files.filter { file in
-            (typeFilter.isEmpty || file.type.localizedCaseInsensitiveContains(typeFilter)) && file.size >= Int64(minimumSizeMB * 1_000_000) && (!recentOnly || file.indexedAt >= Date().addingTimeInterval(-30 * 86400))
-        }
-        return files.sorted {
-            switch sort {
-            case "Name": return $0.filename.localizedStandardCompare($1.filename) == .orderedAscending
-            case "Type": return $0.type == $1.type ? $0.filename.localizedStandardCompare($1.filename) == .orderedAscending : $0.type < $1.type
-            case "Size": return $0.size > $1.size
-            case "Modified": return ($0.modifiedAt ?? .distantPast) > ($1.modifiedAt ?? .distantPast)
-            default: return $0.indexedAt > $1.indexedAt
-            }
-        }
-    }
     // Keep independently type-checked boundaries between layout, events, and presentation.
     var body: some View { removalPresentation }
 
@@ -108,6 +89,11 @@ struct WorkspaceView: View {
             KnowledgeMap(model: graphModel, selectedID: $selectedID, select: inspect)
         case .files, .media, .collections:
             libraryContent
+        case .subjects:
+            SubjectWorkspace(initialSubjectID: subjectID, query: query, select: inspect).id(subjectRoute)
+                .padding(24)
+        case .timeline:
+            FolderBrowser(section: .timeline, query: query, listMode: true, select: inspect).padding(24)
         default:
             FeatureWorkspace(section: currentSection.rawValue, select: inspect)
                 .padding(.top, 18)
@@ -126,7 +112,7 @@ struct WorkspaceView: View {
     }
 
     private var contextInspector: some View {
-        ContextInspector(id: selectedID, select: inspect, remove: requestRemoval)
+        ContextInspector(id: selectedID, select: inspect, remove: requestRemoval, browseSubject: openSubject, browseCollection: openCollection)
             .inspectorColumnWidth(min: 270, ideal: 310, max: 380)
     }
 
@@ -242,7 +228,8 @@ struct WorkspaceView: View {
     }
 
     private func openMap() { section = .graph }
-    private func openCollection(_ id: UUID) { collectionID = id; section = .collections }
+    private func openSubject(_ id: UUID) { subjectID = id; subjectRoute = UUID(); section = .subjects }
+    private func openCollection(_ id: UUID) { collectionID = id; collectionRoute = UUID(); section = .collections }
     private func requestRemoval(_ file: FileItem) { removing = file }
     private func createCollection() { store.addCollection(collectionName); collectionName = "" }
     private func removeIndexEntry() {
@@ -270,6 +257,7 @@ struct WorkspaceView: View {
     }
     private func changeSection(_ next: Section?) {
         if next != .collections { collectionID = nil }
+        if next != .subjects { subjectID = nil }
         selectedID = nil; selectedIDs = []; showInspector = false
     }
     private func acceptDroppedFiles(_ urls: [URL]) -> Bool {
@@ -341,50 +329,19 @@ struct WorkspaceView: View {
                 HStack { organizationControls; Spacer(); presentationControls }
                 VStack(alignment: .leading, spacing: 12) { organizationControls; HStack { presentationControls; Spacer() } }
             }
-            if results.isEmpty {
-                libraryEmptyState
-            } else {
-                fileGrid
-                Text("\(results.count) files · ⌘-click to select multiple · Stored locally")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+            FolderBrowser(section: browserSection, query: query, favorites: favoritesOnly, type: typeFilter,
+                          minimumBytes: Int64(minimumSizeMB * 1_000_000), recent: recentOnly, sort: sort,
+                          listMode: listMode, initialLocation: browserLocation, selectedIDs: selectedIDs,
+                          select: selectFile, remove: requestRemoval)
+                .id(currentSection.rawValue + (currentSection == .collections ? collectionRoute.uuidString : ""))
         }.padding(.horizontal, 24).padding(.vertical, 18)
     }
-
-    private var libraryEmptyState: some View {
-        ContentUnavailableView {
-            Label(store.library.files.isEmpty ? "Make room for clarity" : "No matching files", systemImage: "doc.badge.plus")
-        } description: {
-            Text(store.library.files.isEmpty ? "Add a few files to begin. Index them where they are, or keep verified copies in Vault." : "Try another search or change your filters.")
-        } actions: {
-            Button("Add Files…", action: store.chooseFiles).disabled(store.busy || store.loadFailed || workspace.working || notes.working)
-        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+    private var browserSection: CatalogSection {
+        currentSection == .media ? .media : currentSection == .collections ? .collections : .files
     }
-
-    private var gridColumns: [GridItem] {
-        listMode ? [GridItem(.flexible())] : [GridItem(.adaptive(minimum: 170), spacing: 16)]
-    }
-    private var fileGrid: some View {
-        ScrollView {
-            LazyVGrid(columns: gridColumns, spacing: 16) {
-                ForEach(results) { file in fileButton(file) }
-            }.padding(2)
-        }
-    }
-    private func fileButton(_ file: FileItem) -> some View {
-        Button { selectFile(file.id) } label: { fileCard(file) }
-            .buttonStyle(.plain)
-            .contextMenu { fileMenu(file) }
-    }
-    @ViewBuilder
-    private func fileMenu(_ file: FileItem) -> some View {
-        Button("Open in Default App") { store.open(file) }
-        Button("Reveal in Finder") { store.reveal(file) }
-        Button(file.favorite ? "Remove Favorite" : "Favorite") {
-            var updated = file; updated.favorite.toggle(); store.update(updated)
-        }
-        Divider()
-        Button("Remove from Index…", role: .destructive) { requestRemoval(file) }
+    private var browserLocation: CatalogLocation {
+        var location = CatalogLocation(); location.collectionID = currentSection == .collections ? collectionID : nil
+        return location
     }
     private func selectFile(_ id: UUID) {
         inspect(id)
@@ -394,10 +351,7 @@ struct WorkspaceView: View {
     }
     private var organizationControls: some View {
         HStack {
-                Picker("Collection", selection: $collectionID) {
-                    Text("All collections").tag(nil as UUID?)
-                    ForEach(store.library.collections) { Text($0.name).tag(Optional($0.id)) }
-                }.frame(maxWidth: 200)
+                if collectionID != nil { Button("All Collections") { collectionID = nil } }
                 Button("Filters") { filters.toggle() }.popover(isPresented: $filters) {
                     VStack(alignment: .leading) {
                         TextField("File extension (pdf, png…)", text: $typeFilter)
@@ -417,21 +371,7 @@ struct WorkspaceView: View {
                 Button { listMode.toggle() } label: { Image(systemName: listMode ? "square.grid.2x2" : "list.bullet") }.help("Switch grid or list").accessibilityLabel(listMode ? "Show grid" : "Show list")
         }
     }
-    private func fileCard(_ file: FileItem) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if !listMode { FileThumbnail(file: file).frame(height: 126).frame(maxWidth: .infinity).background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8)) }
-            HStack {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(file.filename).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                    Text("\(file.type.uppercased()) · \(ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file))").font(.system(size: 10)).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-                if file.favorite { Image(systemName: "star.fill").font(.caption).foregroundStyle(.orange) }
-            }
-        }.padding(12).quietPanel()
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(selectedIDs.contains(file.id) ? accent : Color.primary.opacity(0.09), lineWidth: selectedIDs.contains(file.id) ? 2 : 1))
-            .contentShape(Rectangle())
-    }
+
 }
 
 struct FileThumbnail: View {
@@ -441,17 +381,18 @@ struct FileThumbnail: View {
         Group {
             if let thumbnail { Image(nsImage: thumbnail).resizable().scaledToFit().padding(8) }
             else { Image(systemName: VaultStyle.fileSymbol(file.type)).font(.system(size: 44, weight: .ultraLight)).foregroundStyle(.secondary) }
-        }.task(id: file.id) { await load() }
+        }.task(id: fingerprint) { await load() }
     }
+    private var fingerprint: String { "\(file.id)-\(file.size)-\(file.modifiedAt?.timeIntervalSinceReferenceDate ?? 0)" }
     @MainActor private func load() async {
+        thumbnail = nil
+        guard !Task.isCancelled else { return }
         var stale = false
         guard let url = try? URL(resolvingBookmarkData: file.bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale), !stale else { return }
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
         let request = QLThumbnailGenerator.Request(fileAt: url, size: CGSize(width: 240, height: 180), scale: 2, representationTypes: .thumbnail)
-        let image: NSImage? = await withCheckedContinuation { continuation in
-            QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { representation, _ in continuation.resume(returning: representation?.nsImage) }
-        }
+        let image = await ThumbnailPipeline.shared.image(key: fingerprint, request: request)
         if !Task.isCancelled { thumbnail = image }
     }
 }

@@ -2,14 +2,15 @@ import Foundation
 import CryptoKit
 import VaultCore
 
-struct AnalyzedFile: Identifiable {
+struct AnalyzedFile: Identifiable, Sendable {
     var id: UUID { file.id }
     let file: FileItem
     let identity: String
     let allocated: Int64
     let digest: String?
 }
-struct StorageReport {
+struct StorageReport: Sendable {
+    let id = UUID()
     var files: [AnalyzedFile] = []
     var failedIDs: [UUID] = []
     var duplicates: [[AnalyzedFile]] = []

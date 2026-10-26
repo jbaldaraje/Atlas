@@ -10,11 +10,7 @@ struct OverviewWorkspace: View {
     let openCollection: (UUID) -> Void
     let addNotes: () -> Void
     @State private var showLocations = false
-    private var recentlyOpened: [FileItem] {
-        store.library.files.filter { workspace.data.openedFiles?[$0.id] != nil }.sorted {
-            (workspace.data.openedFiles?[$0.id] ?? .distantPast) > (workspace.data.openedFiles?[$1.id] ?? .distantPast)
-        }
-    }
+    @State private var showActivity = false
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
@@ -32,18 +28,10 @@ struct OverviewWorkspace: View {
                     Spacer()
                 }
                 networkEntry
-                if let file = recentlyOpened.first {
-                    HStack(spacing: 16) {
-                        Image(systemName: "arrow.turn.down.right").foregroundStyle(VaultStyle.teal)
-                        VStack(alignment: .leading, spacing: 4) { Text("CONTINUE WHERE YOU LEFT OFF").font(.system(size: 9, weight: .medium)).tracking(1.3).foregroundStyle(.secondary); Text(file.filename).font(.headline).lineLimit(1) }
-                        Spacer(); Button("Open") { store.open(file) }; Button("Inspect") { select(file.id) }
-                    }.padding(18).quietPanel()
-                }
-                if !recentlyOpened.isEmpty {
-                    fileShelf("Recently opened", files: Array(recentlyOpened.prefix(4)))
-                }
-                if !store.library.files.isEmpty {
-                    fileShelf("Recently added", files: Array(store.library.files.sorted { $0.indexedAt > $1.indexedAt }.prefix(4)))
+                Button { showActivity = true } label: { Label("Recent activity", systemImage: "folder.badge.clock") }
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Your parent folders").font(.headline)
+                    FolderBrowser(section: .files, listMode: true, select: select).frame(height: 330)
                 }
                 if !workspace.data.subjects.isEmpty || !store.library.collections.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
@@ -62,6 +50,7 @@ struct OverviewWorkspace: View {
                 Label("Only the files and folders you approve. Everything stays on your Mac.", systemImage: "checkmark.shield").font(.caption).foregroundStyle(.secondary)
             }.padding(26)
         }.background { ObservatoryBackground(grid: false) }
+            .sheet(isPresented: $showActivity) { OverviewActivity(select: select) }
     }
     private var networkEntry: some View {
         Button(action: openMap) {
@@ -78,15 +67,11 @@ struct OverviewWorkspace: View {
     }
     private var miniNetwork: some View {
         Canvas { context, size in
-            let ids = Array(store.library.files.prefix(18).map(\.id))
+            let ids = Array(workspace.data.subjects.prefix(6).map(\.id)) + Array(store.library.collections.prefix(6).map(\.id))
             let layout = SpatialLayout.extending([:], ids: ids)
             var camera = GraphCamera(); camera.fit(Array(layout.values), width: size.width, height: size.height)
             func point(_ id: UUID) -> CGPoint? {
                 guard let p = layout[id] else { return nil }; let s = camera.screen(p, width: size.width, height: size.height); return CGPoint(x: s.x, y: s.y)
-            }
-            for edge in workspace.data.relationships {
-                guard let a = point(edge.source), let b = point(edge.target) else { continue }
-                context.stroke(Path { $0.move(to: a); $0.addLine(to: b) }, with: .color(VaultStyle.teal.opacity(0.4)), lineWidth: 0.7)
             }
             for id in ids {
                 if let p = point(id) {
@@ -95,22 +80,6 @@ struct OverviewWorkspace: View {
                 }
             }
         }.accessibilityHidden(true)
-    }
-    private func fileShelf(_ title: String, files: [FileItem]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title).font(.headline)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 12)], spacing: 12) {
-                ForEach(files) { file in
-                    Button { select(file.id) } label: {
-                        VStack(alignment: .leading, spacing: 10) {
-                            FileThumbnail(file: file).frame(height: 80).frame(maxWidth: .infinity)
-                            Text(file.filename).font(.system(size: 11, weight: .medium)).lineLimit(1)
-                            Text(file.type.uppercased()).font(.system(size: 9)).tracking(1).foregroundStyle(.secondary)
-                        }.padding(14).quietPanel()
-                    }.buttonStyle(.plain).contextMenu { Button("Open") { store.open(file) }; Button("Reveal in Finder") { store.reveal(file) } }
-                }
-            }
-        }
     }
     private func space(_ name: String, subtitle: String, symbol: String, color: Color) -> some View {
         HStack(spacing: 12) {

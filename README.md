@@ -15,7 +15,7 @@ cd Packages/VaultCore
 swift test
 ```
 
-The package contains **37 tests**; the Xcode integration target contains **39 tests**. They have been written but **not executed** here. This Linux machine has neither Swift nor the macOS SDK. [macOS CI](.github/workflows/macos.yml) is provided but has not run. Unsigned CLI builds cannot validate signed sandbox behavior.
+The package contains **45 tests**; the Xcode integration target contains **43 tests**. They have been written but **not executed** here. This Linux machine has neither Swift nor the macOS SDK. [macOS CI](.github/workflows/macos.yml) is provided but has not run. Unsigned CLI builds cannot validate signed sandbox behavior.
 
 ## If Xcode reports “Unable to find module dependency: VaultCore”
 
@@ -41,11 +41,11 @@ If it still fails, report the exact message shown. Keychain failures now include
 
 ## Use the workspaces
 
-- **Overview / All Files:** Add Files (⌘I), review scope, index originals or create verified copies. Browse grid/list, search filename/description/tags and opt-in extracted text, sort/filter, favorite, create collections, and edit metadata in the inspector. Drop files onto regular library workspaces to review import. ⌘-click files and use Organize for batch tags, collection membership, favorites, or confirmed index removal.
+- **Overview / All Files:** Add Files (⌘I), review scope, index originals or create verified copies. Browse parent folders first, then open immediate children in paged grid/list views. Search filename/description/tags and opt-in extracted text, sort/filter, favorite, create collections, and edit metadata in the inspector. See [folder-first browsing and performance](docs/FolderBrowsing.md). Drop files onto regular library workspaces to review import. ⌘-click files and use Organize for batch tags, collection membership, favorites, or confirmed index removal.
 - **Scan Folders / Approved Locations:** Use Scan Folders on Overview or the sidebar, select multiple folders, choose presets/categories and optional local text/GPS processing, then Start Scan. There is no file-count cap: a counting pass measures matching files, then indexing and organization run in batches. The cinematic progress sheet shows estimated completed/remaining percentages and a loading bar. Minimize it to keep navigating while scanning continues in a compact status bar; Expand and Cancel control the same job. Keep Vault open. See [scan progress and background navigation](docs/ScanProgress.md). Progress/results show added files, topics, photo groups, review items, possible duplicates, and errors. Retry is safe for known files. Existing monitoring runs every 30 seconds while Vault is open; pause, exclude relative paths, change File Types, or disconnect. Metadata-only scanning never moves originals. See [smart scanning integration and limitations](docs/SmartScanning.md).
-- **Subjects:** Create subjects, edit descriptions/deadlines, link documents, and explicitly record study sessions. Opening a file never counts as study.
+- **Subjects:** Open a subject parent, browse linked folders, use Link Files to choose documents on demand, save descriptions/deadlines, and explicitly record study sessions. Opening a file never counts as study.
 - **Knowledge Map:** Explore file-type nodes and curved connections; pan/pinch/zoom/fit, focus direct neighbors, switch to a list, filter layers, and create links through file context menus. Double-click opens real files. Node positions persist. A short selection pulse respects Reduce Motion; a cached background index supplies pages of up to 150 nodes and 900 visible connections. Search covers the full catalog, and page controls reach all matches. Opening the map no longer saves the full workspace; explicit node drags save a separate background layout. See [large-library behavior and validation](docs/KnowledgeMapPerformance.md). Inspect relationships from the file inspector to remove links.
-- **Timeline:** See Vault-added events, explicit study records, and separately labeled filesystem modification dates.
+- **Timeline:** Open an event parent, then a month and folder, to see paged Vault-added events, explicit study records, and separately labeled filesystem modification dates.
 - **Storage & Cleanup:** Analyze distinct file identities and streaming SHA-256 duplicate candidates. Filter largest/old files. Originals require confirmation plus a fresh native grant for the exact file before macOS Trash; protected locations are excluded. Managed copies use Vault's recoverable area. Nothing is removed automatically.
 - **Recently Deleted:** Restore retained managed copies without overwrite or confirm permanent removal. Native Trash restores use a fresh destination grant; Finder may remove those files independently. Retained files still consume storage. Allocated size is not a guaranteed reclaim estimate on APFS.
 - **Secure Vault:** Unlock with OS authentication, store/edit/delete encrypted credentials, licenses, recovery codes, or private notes. Lock is automatic on inactivity/focus loss/sleep/session changes. Clipboard clears after 20 seconds if unchanged. The Keychain key is device-bound; ciphertext backups alone do not provide portable recovery. See [security design and limitations](docs/Security.md).
@@ -59,7 +59,7 @@ Use disposable fixtures only. Validate import/copy cancellation, conflict preser
 
 See [spatial design and interaction checklist](docs/Design.md), [specification](docs/Specification.md), [phase roadmap](docs/Roadmap.md), [implementation status](docs/Status.md), and [validation record](docs/Validation.md).
 
-The Overview now shows real recently added/opened files and a compact network entry rather than statistic cards. The native context inspector starts collapsed; select an item to reveal it or use Option–Command–I. The Inspector Preview action opens native Quick Look where supported.
+The Overview shows parent folders and a compact subject/collection network entry. File shelves and child thumbnails load only after navigating into a parent. The native context inspector starts collapsed; select an item to reveal it or use Option–Command–I. The Inspector Preview action opens native Quick Look where supported.
 
 ## Sidebar mascot and glass appearance
 
@@ -68,3 +68,7 @@ The left panel includes a native 3D mascot and live local activity status for sc
 ## Import iCloud / Apple Notes
 
 Open **Notes → Add iCloud / Apple Notes** (also **Add Notes** on Overview), connect to Apple Notes on this Mac, allow the Automation prompt, and select your iCloud account, folder, and unlocked notes. Vault imports readable local plain-text snapshots and can refresh them manually. It does not edit originals or sign in directly to iCloud. Locked notes and attachments are excluded; imported copies are ordinary unencrypted library files. Exported PDF/text notes are supported as a fallback through the existing file importer. See [permissions, use, safety, and pending native validation](docs/AppleNotes.md).
+
+## Parent-first navigation for large libraries
+
+All Files, Images & Media, Collections, Subjects, Timeline, Notes, Overview, Storage, and Recently Deleted now present parent folders or groups before individual children. Views render at most 60 children per page and prepare their metadata in the background; Previous/Next reaches the complete current level. No scan/index limit is added. Thumbnail work is queued, cached, and cancelled when leaving file cards. See [behavior, architecture, and required macOS acceptance](docs/FolderBrowsing.md).

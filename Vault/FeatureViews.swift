@@ -10,71 +10,12 @@ struct FeatureWorkspace: View {
     var body: some View {
         Group {
             switch section {
-                        case "Subjects": SubjectWorkspace()
-            case "Timeline": timeline
-            case "Storage & Cleanup": StorageWorkspace()
+            case "Storage & Cleanup": StorageWorkspace(select: select)
             case "Secure Vault": SecureWorkspace()
             case "Recently Deleted": RecoveryWorkspace()
             default: EmptyView()
             }
         }.padding(.horizontal, 24).padding(.bottom, 20)
-    }
-    private var timeline: some View {
-        List {
-            Section("Recorded by Vault") {
-                ForEach(store.library.files.sorted { $0.indexedAt > $1.indexedAt }) { file in
-                    Button { select(file.id) } label: {
-                        VStack(alignment: .leading) { Text("Added · \(file.filename)"); Text(file.indexedAt.formatted()).font(.caption).foregroundStyle(.secondary) }
-                    }.buttonStyle(.plain)
-                }
-            }
-            Section("Study sessions · explicitly recorded") {
-                ForEach(workspace.data.sessions.sorted { $0.date > $1.date }) { session in
-                    VStack(alignment: .leading) {
-                        Text("\(workspace.data.subjects.first { $0.id == session.subjectID }?.name ?? "Removed subject") · \(session.minutes) minutes")
-                        Text(session.note); Text(session.date.formatted()).font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-            }
-            Section("Filesystem timestamps · last indexed") {
-                ForEach(store.library.files.filter { $0.modifiedAt != nil }.sorted { $0.modifiedAt! > $1.modifiedAt! }) { file in
-                    VStack(alignment: .leading) { Text(file.filename); Text(file.modifiedAt!.formatted()).font(.caption).foregroundStyle(.secondary) }
-                }
-            }
-        }
-    }
-}
-
-struct SubjectWorkspace: View {
-    @EnvironmentObject private var store: LibraryStore
-    @EnvironmentObject private var workspace: WorkspaceStore
-    @State private var name = ""
-    @State private var selected: UUID?
-    @State private var note = ""
-    @State private var minutes = 25
-    var body: some View {
-        VStack {
-            HStack { TextField("New subject", text: $name); Button("Create") { let value = name.trimmingCharacters(in: .whitespacesAndNewlines); if !value.isEmpty { workspace.change { $0.subjects.append(Subject(name: value)) }; name = "" } }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
-            Picker("Subject", selection: $selected) { Text("Select a subject").tag(nil as UUID?); ForEach(workspace.data.subjects) { Text($0.name).tag(Optional($0.id)) } }
-            if let index = workspace.data.subjects.firstIndex(where: { $0.id == selected }) {
-                let subject = workspace.data.subjects[index]
-                Form {
-                    TextField("Description", text: Binding(get: { subject.description }, set: { value in workspace.change { $0.subjects[index].description = value } }))
-                    Toggle("Exam / deadline", isOn: Binding(get: { subject.deadline != nil }, set: { enabled in workspace.change { $0.subjects[index].deadline = enabled ? .now : nil } }))
-                    if let deadline = subject.deadline { DatePicker("Date", selection: Binding(get: { deadline }, set: { value in workspace.change { $0.subjects[index].deadline = value } })) }
-                    Section("Linked files") {
-                        ForEach(store.library.files) { file in
-                            Toggle(file.filename, isOn: Binding(get: { subject.fileIDs.contains(file.id) }, set: { linked in workspace.change { if linked { $0.subjects[index].fileIDs.insert(file.id) } else { $0.subjects[index].fileIDs.remove(file.id) } } }))
-                        }
-                    }
-                    Section("Record a study session") {
-                        Stepper("\(minutes) minutes", value: $minutes, in: 1...480)
-                        TextField("What did you study?", text: $note)
-                        Button("Record Session") { workspace.change { $0.sessions.append(StudySession(subjectID: subject.id, minutes: minutes, note: note)) }; note = "" }
-                    }
-                }.formStyle(.grouped)
-            } else { ContentUnavailableView("Organize by subject", systemImage: "books.vertical", description: Text("Create a subject, link files, set a deadline, and explicitly record study sessions.")) }
-        }
     }
 }
 
@@ -82,6 +23,11 @@ struct StorageWorkspace: View {
     @EnvironmentObject private var trash: NativeTrashService
     @EnvironmentObject private var store: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
+    let select: (UUID) -> Void
+    @State private var prepared: StoragePresentation?
+    @State private var mode: Int?
+    @State private var selectedDuplicate: CatalogSource?
+    @State private var duplicatePage = 0
     @State private var pending: FileItem?
     @State private var minimumMB = 0.0
     @State private var oldOnly = false
@@ -89,24 +35,24 @@ struct StorageWorkspace: View {
         VStack(alignment: .leading) {
             HStack {
                 Button("Analyze & Verify Duplicates") { workspace.analyze(store.library.files) }.disabled(workspace.working)
-                if workspace.working { ProgressView().controlSize(.small); Button("Cancel") { workspace.cancel() } }
+                if workspace.working {
+                    ProgressView().controlSize(.small)
+                    if workspace.processingLabel == "Analyzing storage" { Button("Cancel") { workspace.cancel() } }
+                }
             }
             Text("Only indexed regular files are analyzed. Hard links and duplicate references count once. Original Trash actions require an additional explicit grant. Results describe the last scan, not the whole Mac.").font(.caption).foregroundStyle(.secondary)
             if let report = workspace.report {
-                Text("Logical: \(bytes(report.logicalBytes)) · Allocated: \(bytes(report.allocatedBytes)) · Unavailable: \(report.failedIDs.count)").font(.headline)
-                let categories = Dictionary(grouping: report.files, by: { $0.file.type.uppercased() }).map { (type: $0.key, size: $0.value.reduce(Int64(0)) { $0 + $1.file.size }) }.sorted { $0.size > $1.size }
-                Chart(categories, id: \.type) { item in BarMark(x: .value("Logical bytes", item.size), y: .value("Type", item.type)).foregroundStyle(Color.indigo) }.frame(height: min(220, CGFloat(categories.count * 28 + 20)))
-                HStack { Slider(value: $minimumMB, in: 0...1000); Text("Minimum \(Int(minimumMB)) MB"); Toggle("Not modified in 12 months", isOn: $oldOnly) }
-                List {
-                    Section("Largest files · review suggestions only") {
-                        ForEach(report.files.filter { $0.file.size >= Int64(minimumMB * 1_000_000) && (!oldOnly || ($0.file.modifiedAt ?? .now) < Date().addingTimeInterval(-365 * 86400)) }.sorted { $0.file.size > $1.file.size }) { entry in fileRow(entry.file) }
-                    }
-                    ForEach(Array(report.duplicates.enumerated()), id: \.offset) { index, group in
-                        Section("SHA-256 match \(index + 1) · \(group.count) distinct files") { ForEach(group) { fileRow($0.file) } }
-                    }
-                }
-                Text("Allocated bytes are reported filesystem values, not guaranteed recoverable space (APFS clones/compression may share blocks). Hash matches are review candidates; nothing is selected or removed automatically.").font(.caption).foregroundStyle(.secondary)
+                if let prepared, prepared.id == report.id { storageContent(prepared) }
+                else { ProgressView("Preparing storage groups…").frame(maxWidth: .infinity, maxHeight: .infinity) }
             }
+        }
+        .task(id: workspace.report?.id) {
+            guard let report = workspace.report else { prepared = nil; return }
+            let worker = Task.detached(priority: .userInitiated) { StoragePresentation(report) }
+            let next = await worker.value
+            guard !Task.isCancelled else { return }
+            prepared = next; mode = nil; selectedDuplicate = nil; duplicatePage = 0
+
         }.confirmationDialog("Review file removal", isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }), titleVisibility: .visible) {
             if pending?.ownership == .managedCopy {
                 Button("Move managed copy to recovery area", role: .destructive) { if let pending { workspace.retain(pending, library: store) }; pending = nil }
@@ -117,49 +63,112 @@ struct StorageWorkspace: View {
         } message: { Text("\(pending?.filename ?? "")\n\(pending?.originalLocation ?? "")\nAll collection references use this file. Its index entry is removed after a recorded filesystem operation. Managed copies go to Vault recovery; originals go to macOS Trash after another grant. These recoverable operations do not reclaim space immediately.") }
     }
     private func bytes(_ size: Int64) -> String { ByteCountFormatter.string(fromByteCount: size, countStyle: .file) }
-    private func fileRow(_ file: FileItem) -> some View {
-        HStack {
-            VStack(alignment: .leading) { Text(file.filename); Text(file.originalLocation).font(.caption).foregroundStyle(.secondary); Text(file.modifiedAt?.formatted() ?? "Unknown modification date").font(.caption) }
-            Spacer(); Text(bytes(file.size)); Button("Reveal") { store.reveal(file) }
-            Button(file.ownership == .managedCopy ? "Remove Copy…" : "Trash Original…") { pending = file }.disabled(workspace.working)
+    @ViewBuilder private func storageContent(_ report: StoragePresentation) -> some View {
+        if let mode {
+            HStack {
+                Button("Storage Groups") { self.mode = nil; selectedDuplicate = nil }
+                Text(mode == 0 ? "Indexed parent folders" : "Verified duplicate groups").font(.headline)
+            }
+            if mode == 0 {
+                HStack { Slider(value: $minimumMB, in: 0...1000); Text("Minimum \(Int(minimumMB)) MB"); Toggle("Not modified in 12 months", isOn: $oldOnly) }
+                FolderBrowser(section: .files, minimumBytes: Int64(minimumMB * 1_000_000), old: oldOnly, sort: "Size", listMode: true,
+                              source: report.source, select: select, cleanup: { pending = $0 })
+            } else if let selectedDuplicate {
+                Button("All Duplicate Groups") { self.selectedDuplicate = nil }
+                Text("SHA-256 matches are review candidates. Originals and managed copies remain distinct.").font(.caption).foregroundStyle(.secondary)
+                FolderBrowser(section: .files, listMode: true, source: selectedDuplicate, select: select, cleanup: { pending = $0 })
+            } else {
+                List(Array(report.duplicates.dropFirst(duplicatePage * 60).prefix(60)), id: \.id) { source in
+                    Button { selectedDuplicate = source } label: { Label("Verified group · \(source.files.count) distinct files", systemImage: "folder") }
+                }
+                HStack {
+                    Button("Previous") { duplicatePage -= 1 }.disabled(duplicatePage == 0)
+                    Text("Page \(duplicatePage + 1)").font(.caption)
+                    Button("Next") { duplicatePage += 1 }.disabled((duplicatePage + 1) * 60 >= report.duplicates.count)
+                }
+            }
+        } else {
+            Text("Logical: \(bytes(report.logical)) · Allocated: \(bytes(report.allocated)) · Unavailable: \(report.failed)").font(.headline)
+            Chart(report.categories, id: \.type) { item in BarMark(x: .value("Logical bytes", item.size), y: .value("Type", item.type)).foregroundStyle(VaultStyle.lavender) }.frame(height: 200)
+            Button { mode = 0 } label: { Label("Indexed parent folders · \(report.source.files.count.formatted()) files", systemImage: "folder.fill").frame(maxWidth: .infinity, alignment: .leading).padding(18) }
+            Button { mode = 1 } label: { Label("Verified duplicate groups · \(report.duplicates.count.formatted()) groups", systemImage: "square.stack").frame(maxWidth: .infinity, alignment: .leading).padding(18) }
+            Text("Open a group, then a parent folder. Individual cleanup actions appear in a file’s context menu and require confirmation. Allocated bytes are not guaranteed recoverable space on APFS.").font(.caption).foregroundStyle(.secondary)
+            Spacer()
         }
     }
+
 }
 
 struct RecoveryWorkspace: View {
     @EnvironmentObject private var trash: NativeTrashService
     @EnvironmentObject private var store: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
+    @State private var recoveryFolder: Int?
+    @State private var recoveryPage = 0
     @State private var pending: RecoveryEntry?
     var body: some View {
         VStack(alignment: .leading) {
             Text("Recently Deleted · recovery locations").font(.headline)
             Text("These files still occupy disk space. Managed copies use Vault recovery; originals use macOS Trash. Finder can remove Trash items independently. Restoring never overwrites an existing file.").font(.caption).foregroundStyle(.secondary)
-            List {
-                Section("macOS Trash · restore availability checked on request") {
-                    ForEach(trash.entries) { entry in
-                        VStack(alignment: .leading) {
-                            Text(entry.file.filename); Text(entry.file.originalLocation).font(.caption)
-                            Text(entry.deletedAt.formatted()).font(.caption)
-                            Button("Restore to Location…") { trash.restore(entry, library: store) }
+            if recoveryFolder == nil {
+                Button { recoveryFolder = 0; recoveryPage = 0 } label: { Label("macOS Trash · \(trash.entries.count.formatted()) tracked items", systemImage: "folder.fill").padding(18).frame(maxWidth: .infinity, alignment: .leading) }
+                Button { recoveryFolder = 1; recoveryPage = 0 } label: { Label("Vault-managed recovery · \(workspace.recoveryEntries.count.formatted()) retained items", systemImage: "folder.fill").padding(18).frame(maxWidth: .infinity, alignment: .leading) }
+                Spacer()
+            } else {
+                Button("Recovery Locations") { recoveryFolder = nil }
+                List {
+                    if recoveryFolder == 0 {
+                        ForEach(Array(trash.entries.dropFirst(recoveryPage * 60).prefix(60))) { entry in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(entry.file.filename); Text(entry.file.originalLocation).font(.caption)
+                                Text(entry.deletedAt.formatted()).font(.caption)
+                                Button("Restore to Location…") { trash.restore(entry, library: store) }
+                            }
+                        }
+                    } else {
+                        ForEach(Array(workspace.recoveryEntries.dropFirst(recoveryPage * 60).prefix(60))) { entry in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(entry.file.filename).font(.headline); Text(entry.file.originalLocation).font(.caption)
+                                Text("Retained " + entry.date.formatted()).font(.caption)
+                                HStack {
+                                    Button("Restore") { workspace.restore(entry, library: store) }
+                                    Button("Delete Permanently…", role: .destructive) { pending = entry }
+                                }.disabled(workspace.working)
+                            }
                         }
                     }
                 }
-                Section("Vault-managed recovery") {
-                ForEach(workspace.recoveryEntries) { entry in
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(entry.file.filename).font(.headline)
-                    Text(entry.file.originalLocation).font(.caption)
-                    Text("Retained \(entry.date.formatted()) · \(ByteCountFormatter.string(fromByteCount: entry.file.size, countStyle: .file))").font(.caption)
-                    HStack { Button("Restore") { workspace.restore(entry, library: store) }; Button("Delete Permanently…", role: .destructive) { pending = entry } }.disabled(workspace.working)
+                HStack {
+                    Button("Previous") { recoveryPage -= 1 }.disabled(recoveryPage == 0)
+                    Text("Page \(recoveryPage + 1)").font(.caption)
+                    Button("Next") { recoveryPage += 1 }.disabled((recoveryPage + 1) * 60 >= (recoveryFolder == 0 ? trash.entries.count : workspace.recoveryEntries.count))
                 }
             }
-                }
-            }
+
         }.task { workspace.refreshRecovery(); trash.refresh() }
+            .onChange(of: trash.entries.count) { _, count in if recoveryFolder == 0 { recoveryPage = min(recoveryPage, max(0, (count - 1) / 60)) } }
+            .onChange(of: workspace.recoveryEntries.count) { _, count in if recoveryFolder == 1 { recoveryPage = min(recoveryPage, max(0, (count - 1) / 60)) } }
             .confirmationDialog("Permanently delete retained copy?", isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }), titleVisibility: .visible) {
                 Button("Delete Permanently", role: .destructive) { if let pending { workspace.permanentlyDelete(pending) }; pending = nil }
                 Button("Cancel", role: .cancel) { pending = nil }
             } message: { Text("\(pending?.file.filename ?? "")\nOriginal managed location: \(pending?.file.originalLocation ?? "")\nThis retained copy cannot be recovered by Vault after deletion. The source outside Vault is unaffected.") }
+    }
+}
+
+private struct StoragePresentation: Sendable {
+    struct Category: Sendable { let type: String; let size: Int64 }
+    let id: UUID
+    let logical: Int64
+    let allocated: Int64
+    let failed: Int
+    let categories: [Category]
+    let source: CatalogSource
+    let duplicates: [CatalogSource]
+    init(_ report: StorageReport) {
+        id = report.id; logical = report.logicalBytes; allocated = report.allocatedBytes; failed = report.failedIDs.count
+        let all = Dictionary(grouping: report.files, by: { $0.file.type.uppercased() }).map { Category(type: $0.key, size: $0.value.reduce(0) { $0 + $1.file.size }) }.sorted { $0.size > $1.size }
+        categories = Array(all.prefix(12)) + (all.count > 12 ? [Category(type: "Other types", size: all.dropFirst(12).reduce(0) { $0 + $1.size })] : [])
+        source = CatalogSource(id: "storage", revision: report.id, files: report.files.map(\.file))
+        duplicates = report.duplicates.enumerated().map { CatalogSource(id: "duplicate-\(report.id)-\($0.offset)", revision: report.id, files: $0.element.map(\.file)) }
     }
 }

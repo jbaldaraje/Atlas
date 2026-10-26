@@ -6,14 +6,14 @@ Linux, with no Swift compiler, Xcode, or macOS SDK. **No Swift compilation, XCTe
 
 Static checks passed after the expanded implementation:
 
-- Swift grammar parsing of all **46 Swift files**, using tree-sitter-swift. This does not perform type checking or validate native framework APIs.
+- Swift grammar parsing of all **54 Swift files**, using tree-sitter-swift. This does not perform type checking or validate native framework APIs.
 - OpenStep parsing of `project.pbxproj` and resolution of declared object, product, package, configuration, and build-phase references.
-- Exact membership of all **31 application Swift sources** and **16 native integration source memberships** in project references, including new services and tests.
+- Exact membership of all **37 application Swift sources** and **17 native integration source memberships** in project references, including new services and tests.
 - Shared Xcode scheme XML and entitlement plist parsing.
 - App Sandbox, user-selected read/write capability, and app-scoped bookmark configuration; no network client entitlement. Original index bookmarks explicitly request read-only access.
 - `git diff --check` returned success.
 
-Validation parsers were installed from PyPI into `/tmp` and are not app dependencies. The repository's own automated tests are **37 domain/package test methods and 39 macOS integration test methods**; all are currently **unrun**. Syntax parser checks are not substitutes for them.
+Validation parsers were installed from PyPI into `/tmp` and are not app dependencies. The repository's own automated tests are **45 domain/package test methods and 43 macOS integration test methods**; all are currently **unrun**. Syntax parser checks are not substitutes for them.
 
 ## Required next validation
 
@@ -88,3 +88,9 @@ Five domain and four native test methods were added, including 30,123-file graph
 A user macOS build reported two ambiguous Subject annotations in KnowledgeMapModel.swift, assignment to the immutable catch error, and related ObservedObject/Binding diagnostics in KnowledgeMap. The new model imports Combine, whose Subject protocol conflicts with VaultCore.Subject. Both signatures now explicitly name VaultCore.Subject. The node-position catch handler now assigns self.error instead of the caught Error value. The view diagnostics are consistent with cascading type-check failures from the invalid model signatures; no binding workaround was added.
 
 Swift grammar and project/source-reference checks pass after the correction. Native compilation remains unverified here: this Linux environment has no Swift compiler or Xcode. Rebuild with the Vault scheme on macOS to verify that all reported diagnostics clear.
+
+## Parent-first pages and deferred child rendering
+
+Replaced full-catalog render-time file sorting, subject-wide file toggles, and eager timeline rows with a shared actor-backed metadata browser. Ordinary workspaces show parent folders/groups first and at most 60 immediate children per page; search/filter counts are computed in the background and all matches remain reachable. Added source-aware roots, collection/subject navigation, event/month timeline grouping, Notes account/folder grouping, overview parent folders, storage/recovery parents, conditional/paged inspector editors, and queued/cancellable thumbnails. See FolderBrowsing.md for scope and native acceptance. No scan or indexing quota, additional folder permission, or automatic file operation was added.
+
+Eight package and four native regression methods were added. Current source total: 88 methods (45 package, 43 native), all unrun. Fixtures include 30,123 catalog entries, deep and overlapping path boundaries, mixed pagination, duplicate folder names, media and text filters, virtual memberships, timeline date/study separation, Notes grouping, shared cache reuse, dataset isolation, revision invalidation, and cancellation. Static grammar checks pass for 54 Swift files, with project reference/membership, scheme/entitlement syntax, and whitespace checks. No Swift compiler/Xcode/macOS SDK is available; actual native compilation, Quick Look queue/cancellation, security-scope cleanup, UI performance, accessibility, and deletion/recovery runtime acceptance remain unverified.

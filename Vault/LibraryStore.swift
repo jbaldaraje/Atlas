@@ -9,6 +9,7 @@ struct OpenedFileEvent: Equatable { let id: UUID; let date: Date }
 final class LibraryStore: ObservableObject {
     @Published private(set) var library = Library()
     private(set) var graphRevision = UUID()
+    let catalogBrowser = CatalogBrowserEngine()
     @Published private(set) var openedEvent: OpenedFileEvent?
     @Published var candidates: [ImportCandidate] = []
     @Published var presentingImport = false

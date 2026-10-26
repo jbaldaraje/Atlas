@@ -9,41 +9,26 @@ struct NotesWorkspace: View {
     let select: (UUID) -> Void
     let addNotes: () -> Void
     @State private var selectedID: UUID?
-    private var files: [FileItem] {
-        library.library.files.filter { file in
-            guard let source = file.noteSource else { return false }
-            return query.isEmpty || source.title.localizedCaseInsensitiveContains(query) ||
-                (workspace.data.extractedText[file.id]?.localizedCaseInsensitiveContains(query) ?? false)
-        }.sorted { ($0.noteSource?.sourceModifiedAt ?? $0.indexedAt) > ($1.noteSource?.sourceModifiedAt ?? $1.indexedAt) }
-    }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Button(action: addNotes) { Label("Add iCloud / Apple Notes", systemImage: "note.text.badge.plus") }.disabled(notes.working || library.busy || workspace.working)
                 Spacer()
-                Text("\(files.count) local snapshots").font(.caption).foregroundStyle(.secondary)
+                Text("Browse accounts → folders → notes").font(.caption).foregroundStyle(.secondary)
             }.padding(.horizontal, 22).padding(.top, 18)
             Text("Notes are read from Apple Notes on this Mac. iCloud syncing is handled by macOS; Vault keeps snapshots and refreshes only when requested.").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 22)
             if let message = notes.message { Text(message).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 22) }
-            if files.isEmpty {
-                ContentUnavailableView("Your notes, alongside your files", systemImage: "note.text", description: Text("Add notes from your iCloud account in Apple Notes, or import exported PDF/text notes through the same dialog."))
-            } else { content }
+            FolderBrowser(section: .notes, query: query, listMode: true, select: { selectedID = $0 })
+                .padding(.horizontal, 22).padding(.bottom, 18)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-    private var content: some View {
-        HSplitView {
-            List(files, selection: $selectedID) { file in
-                VStack(alignment: .leading, spacing: 5) {
-                    Label(file.noteSource?.title ?? file.filename, systemImage: "note.text").font(.callout).lineLimit(2)
-                    Text(file.noteSource?.folderName ?? "Apple Notes").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                }.padding(.vertical, 7).tag(file.id)
-            }.frame(minWidth: 160, idealWidth: 210, maxWidth: 280).scrollContentBackground(.hidden)
-            if let file = library.library.files.first(where: { $0.id == selectedID && $0.noteSource != nil }) {
-                NoteSnapshotReader(file: file, inspect: { select(file.id) }).id(file.id)
-            } else {
-                ContentUnavailableView("Select a note", systemImage: "doc.text.magnifyingglass", description: Text("Read your imported snapshot here."))
+            .sheet(isPresented: Binding(get: { selectedID != nil }, set: { if !$0 { selectedID = nil } })) {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack { Spacer(); Button("Done") { selectedID = nil } }.padding(16)
+                    if let file = library.library.files.first(where: { $0.id == selectedID && $0.noteSource != nil }) {
+                        NoteSnapshotReader(file: file, inspect: { select(file.id) }).id(file.id)
+                    }
+                }.frame(width: 760, height: 580)
             }
-        }
     }
 }
 

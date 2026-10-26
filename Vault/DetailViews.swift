@@ -12,7 +12,10 @@ struct FileInspector: View {
     @State private var preview = false
     @State private var showMetadata = false
     @State private var showContent = false
-    private var related: [Relationship] { workspace.data.relationships.filter { $0.source == file.id || $0.target == file.id } }
+    @State private var showMemberships = false
+    @State private var showRelated = false
+    @State private var membershipSection = CatalogSection.subjects
+    @State private var membershipSearch = ""
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
@@ -51,37 +54,21 @@ struct FileInspector: View {
                         store.update(updated)
                     }.disabled(description == file.description && tags == file.tags.joined(separator: ", "))
                 }
-                DisclosureGroup("Subjects & collections") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(workspace.data.subjects) { subject in
-                            Toggle(subject.name, isOn: Binding(get: { subject.fileIDs.contains(file.id) }, set: { included in
-                                workspace.change { data in
-                                    guard let index = data.subjects.firstIndex(where: { $0.id == subject.id }) else { return }
-                                    if included { data.subjects[index].fileIDs.insert(file.id) } else { data.subjects[index].fileIDs.remove(file.id) }
-                                }
-                            }))
-                            Button("Inspect \(subject.name)") { select(subject.id) }.font(.caption)
-                        }
-                        if store.library.collections.isEmpty { Text("Create a collection from the library toolbar.").font(.caption).foregroundStyle(.secondary) }
-                        ForEach(store.library.collections) { collection in
-                            Toggle(collection.name, isOn: Binding(get: { file.collectionIDs.contains(collection.id) }, set: { included in
-                                var updated = file
-                                if included { updated.collectionIDs.insert(collection.id) } else { updated.collectionIDs.remove(collection.id) }
-                                store.update(updated)
-                            }))
-                        }
-                    }.padding(.top, 12)
+                DisclosureGroup("Subjects & collections", isExpanded: $showMemberships) {
+                    if showMemberships {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Picker("Membership type", selection: $membershipSection) {
+                                Text("Subjects").tag(CatalogSection.subjects)
+                                Text("Collections").tag(CatalogSection.collections)
+                            }.pickerStyle(.segmented)
+                            TextField("Find a subject or collection…", text: $membershipSearch)
+                            FolderBrowser(section: membershipSection, query: membershipSearch, listMode: true, linkingFileID: file.id, select: select)
+                                .id(membershipSection.rawValue).frame(height: 320)
+                        }.padding(.top, 12)
+                    }
                 }
-                DisclosureGroup("Related documents · \(related.count)") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        if related.isEmpty { Text("Create a connection from a file’s Knowledge Map context menu.").font(.caption).foregroundStyle(.secondary) }
-                        ForEach(related) { edge in
-                            let id = edge.source == file.id ? edge.target : edge.source
-                            if let target = store.library.files.first(where: { $0.id == id }) {
-                                HStack { Button(target.filename) { select(target.id) }.lineLimit(2); Spacer(); Button { select(edge.id) } label: { Image(systemName: "link") }.help("Inspect relationship").accessibilityLabel("Inspect relationship to \(target.filename)") }
-                            }
-                        }
-                    }.padding(.top, 12)
+                DisclosureGroup("Related documents", isExpanded: $showRelated) {
+                    if showRelated { RelatedFileLinks(fileID: file.id, select: select).frame(height: 320).padding(.top, 12) }
                 }
                 if let facts = workspace.data.organizationFacts?[file.id] {
                     organizationEvidence(facts)

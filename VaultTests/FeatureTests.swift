@@ -548,3 +548,72 @@ final class KnowledgeGraphEngineTests: XCTestCase {
         XCTAssertNotEqual(workspace.graphRevision, initial)
     }
 }
+
+@MainActor
+final class CatalogBrowserEngineTests: XCTestCase {
+    private func snapshot() -> CatalogSnapshot {
+        var library = Library()
+        library.files = [
+            FileItem(filename: "notes.txt", type: "txt", bookmark: Data(), originalLocation: "/fixture/Docs/notes.txt", ownership: .original, size: 1),
+            FileItem(filename: "photo.png", type: "png", bookmark: Data(), originalLocation: "/fixture/Photos/photo.png", ownership: .original, size: 1)
+        ]
+        return CatalogSnapshot(library: library, subjects: [], sessions: [], sourcePaths: ["/fixture"], text: [:])
+    }
+    func testSharedIndexIsReusedAcrossPagesAndMediaUntilRevisionChanges() async throws {
+        let engine = CatalogBrowserEngine(), source = snapshot()
+        let revision = CatalogRevision(library: UUID(), workspace: UUID())
+        var query = CatalogQuery()
+        let root = try await engine.page(CatalogRequest(dataset: "library", revision: revision, query: query), snapshot: source)
+        XCTAssertTrue(root.files.isEmpty); XCTAssertEqual(root.groups[0].count, 2)
+        query.location.folder = "/fixture/Docs"
+        let docs = try await engine.page(CatalogRequest(dataset: "library", revision: revision, query: query), snapshot: source)
+        XCTAssertEqual(docs.files.map(\.filename), ["notes.txt"])
+        query = CatalogQuery(); query.section = .media
+        let media = try await engine.page(CatalogRequest(dataset: "library", revision: revision, query: query), snapshot: source)
+        XCTAssertTrue(media.files.isEmpty); XCTAssertEqual(media.groups[0].count, 1)
+        let firstCount = await engine.buildCount; XCTAssertEqual(firstCount, 1)
+        let changed = CatalogRevision(library: UUID(), workspace: revision.workspace)
+        _ = try await engine.page(CatalogRequest(dataset: "library", revision: changed, query: query), snapshot: source)
+        let changedCount = await engine.buildCount; XCTAssertEqual(changedCount, 2)
+    }
+    func testCancelledPreparationDoesNotPublishChildrenAndNextNavigationWorks() async throws {
+        let model = FolderBrowserModel(), engine = CatalogBrowserEngine(), source = snapshot()
+        let revision = CatalogRevision(library: UUID(), workspace: UUID())
+        var query = CatalogQuery(); query.location.folder = "/fixture/Docs"
+        let child = CatalogRequest(dataset: "library", revision: revision, query: query)
+        let worker = Task { await model.load(child, snapshot: source, engine: engine) }
+        worker.cancel(); await worker.value
+        XCTAssertFalse(model.ready); XCTAssertTrue(model.page.files.isEmpty); XCTAssertFalse(model.loading)
+        let root = CatalogRequest(dataset: "library", revision: revision, query: CatalogQuery())
+        await model.load(root, snapshot: source, engine: engine)
+        XCTAssertTrue(model.ready); XCTAssertTrue(model.page.files.isEmpty); XCTAssertEqual(model.applied, root)
+    }
+    func testStorageDatasetDoesNotReplaceTheCachedLibraryIndex() async throws {
+        let engine = CatalogBrowserEngine(), source = snapshot()
+        let revision = CatalogRevision(library: UUID(), workspace: UUID())
+        let root = CatalogRequest(dataset: "library", revision: revision, query: CatalogQuery())
+        _ = try await engine.page(root, snapshot: source)
+        var onlyPhotos = Library(); onlyPhotos.files = [source.library.files[1]]
+        let storage = CatalogSnapshot(library: onlyPhotos, subjects: [], sessions: [], sourcePaths: [], text: [:])
+        _ = try await engine.page(CatalogRequest(dataset: "storage", revision: revision, query: CatalogQuery()), snapshot: storage)
+        let reopened = try await engine.page(root, snapshot: source)
+        XCTAssertEqual(reopened.groups[0].count, 2)
+        let count = await engine.buildCount; XCTAssertEqual(count, 2)
+    }
+    func testBrowserRevisionIgnoresScanCountersButIncludesStudyAndText() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = WorkspaceStore(base: root)
+        var job = ScanJob(sources: [])
+        XCTAssertTrue(workspace.change { $0.lastScan = job })
+        let initial = workspace.browserRevision
+        job.discovered = 30_123
+        XCTAssertTrue(workspace.change { $0.lastScan = job; $0.openedFiles = [UUID(): .now]; $0.graphPositions = [:] })
+        XCTAssertEqual(workspace.browserRevision, initial)
+        XCTAssertTrue(workspace.change { $0.sessions.append(StudySession(subjectID: UUID(), minutes: 20, note: "Explicit")) })
+        XCTAssertNotEqual(workspace.browserRevision, initial)
+        let study = workspace.browserRevision
+        XCTAssertTrue(workspace.change { $0.extractedText[UUID()] = "Searchable" })
+        XCTAssertNotEqual(workspace.browserRevision, study)
+    }
+}

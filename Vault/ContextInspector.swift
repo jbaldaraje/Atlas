@@ -7,10 +7,14 @@ struct ContextInspector: View {
     let id: UUID?
     let select: (UUID) -> Void
     let remove: (FileItem) -> Void
+    let browseSubject: (UUID) -> Void
+    let browseCollection: (UUID) -> Void
     @State private var removingRelationship = false
     var body: some View {
         Group {
-            if let file = store.library.files.first(where: { $0.id == id }) {
+            if id == nil {
+                ContentUnavailableView("Room for context", systemImage: "sidebar.right", description: Text("Select a file, subject, or collection to inspect it."))
+            } else if let file = store.library.files.first(where: { $0.id == id }) {
                 FileInspector(file: file, remove: { remove(file) }, select: select).id(file.id)
             } else if let subject = workspace.data.subjects.first(where: { $0.id == id }) {
                 ScrollView {
@@ -19,7 +23,8 @@ struct ContextInspector: View {
                         Text(subject.description.isEmpty ? "No description yet. Edit this subject in the Subjects workspace." : subject.description).font(.callout).foregroundStyle(.secondary)
                         if let date = subject.deadline { Label(date.formatted(date: .abbreviated, time: .shortened), systemImage: "calendar").font(.caption) }
                         Divider(); Text("Linked files").font(.headline)
-                        fileLinks(subject.fileIDs)
+                        Text("\(subject.fileIDs.count.formatted()) linked files").font(.caption).foregroundStyle(.secondary)
+                        Button("Browse linked folders") { browseSubject(subject.id) }
                         Divider(); Text("Recorded study").font(.headline)
                         let sessions = workspace.data.sessions.filter { $0.subjectID == subject.id }
                         Text("\(sessions.count) sessions · \(sessions.reduce(0) { $0 + $1.minutes }) minutes").font(.caption).foregroundStyle(.secondary)
@@ -30,7 +35,8 @@ struct ContextInspector: View {
                     VStack(alignment: .leading, spacing: 20) {
                         identity(collection.name, kind: "COLLECTION", symbol: "square.stack", color: VaultStyle.amber)
                         Text("A virtual collection. Membership does not change where files live.").font(.caption).foregroundStyle(.secondary)
-                        Divider(); fileLinks(Set(store.library.files.filter { $0.collectionIDs.contains(collection.id) }.map(\.id)))
+                        Divider()
+                        Button("Browse collection folders") { browseCollection(collection.id) }
                     }.padding(22)
                 }
             } else if let edge = workspace.data.relationships.first(where: { $0.id == id }) {
