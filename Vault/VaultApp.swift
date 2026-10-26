@@ -8,9 +8,10 @@ struct VaultApp: App {
     @StateObject private var secure = SecureStore()
     @StateObject private var trash = NativeTrashService()
     @StateObject private var notes = AppleNotesStore()
+    @StateObject private var preferences = WorkspacePreferencesStore()
     var body: some Scene {
         WindowGroup {
-            WorkspaceView().environmentObject(store).environmentObject(workspace).environmentObject(secure).environmentObject(trash).environmentObject(notes)
+            WorkspaceView().environmentObject(store).environmentObject(workspace).environmentObject(secure).environmentObject(trash).environmentObject(notes).environmentObject(preferences)
                 .frame(minWidth: 1000, minHeight: 680)
                 .buttonStyle(CinematicButtonStyle())
                 .preferredColorScheme(appearance == "system" ? nil : appearance == "dark" ? .dark : .light)

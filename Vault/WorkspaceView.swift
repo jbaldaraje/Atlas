@@ -28,10 +28,19 @@ struct WorkspaceView: View {
     @EnvironmentObject private var workspace: WorkspaceStore
     @EnvironmentObject private var trash: NativeTrashService
     @EnvironmentObject private var notes: AppleNotesStore
+    @EnvironmentObject private var preferences: WorkspacePreferencesStore
     @Environment(\.accessibilityReduceMotion) private var reducedMotion
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("cinematicMotion") private var cinematicMotion = true
     @State private var showingNotesImport = false
     @StateObject private var graphModel = KnowledgeMapModel()
+    @StateObject private var navigator = ExplorationNavigator()
+    @StateObject private var browsingSession = BrowsingSessionStore()
+    @State private var previewRequest: DocumentPreviewRequest?
+    @State private var pendingGraphID: UUID?
+    @State private var initialNoteID: UUID?
+    @State private var noteRoute = UUID()
+    @State private var navigationRestored = false
     @AppStorage("fileKindFilter") private var fileKind = FileKindFilter.all
     @State private var section: Section? = .overview
     @State private var columns: NavigationSplitViewVisibility = .all
@@ -48,6 +57,8 @@ struct WorkspaceView: View {
     @State private var subjectRoute = UUID()
     @State private var collectionRoute = UUID()
     @State private var collectionID: UUID?
+    @State private var fileRoute = UUID()
+    @State private var pinnedCollectionsOnly = false
     @State private var favoritesOnly = false
     @State private var listMode = false
     @State private var sort = "Added"
@@ -56,7 +67,14 @@ struct WorkspaceView: View {
     @State private var removing: FileItem?
     private let accent = VaultStyle.lavender
     // Keep independently type-checked boundaries between layout, events, and presentation.
-    var body: some View { removalPresentation }
+    var body: some View {
+        removalPresentation.environmentObject(navigator).environmentObject(browsingSession).environment(\.workspaceRouting, routing)
+    }
+    private var routing: WorkspaceRouting {
+        WorkspaceRouting(inspect: navigate, restore: restoreHistory, preview: previewDocument, showMap: showInMap,
+            browseSubject: browseSubject, browseCollection: browseCollection, browseFiles: browseFiles,
+            browseNotes: browseNotes, browseStorage: { previewRequest = nil; section = .storage }, browsePinnedCollections: browsePinnedCollections, searchFiles: searchFiles, addNotes: { showingNotesImport = true }, record: recordTopic)
+    }
 
     private var navigationLayout: some View {
         NavigationSplitView(columnVisibility: $columns) {
@@ -85,7 +103,7 @@ struct WorkspaceView: View {
         case .overview:
             OverviewWorkspace(select: inspect, openMap: openMap, openSubjects: openAllSubjects, openCollections: openAllCollections, addNotes: { showingNotesImport = true })
         case .notes:
-            NotesWorkspace(query: query, select: inspect, addNotes: { showingNotesImport = true })
+            NotesWorkspace(query: query, select: inspect, addNotes: { showingNotesImport = true }, initialNoteID: initialNoteID).id(noteRoute)
         case .graph:
             KnowledgeMap(model: graphModel, selectedID: $selectedID, select: inspect)
         case .files, .media, .collections:
@@ -113,7 +131,7 @@ struct WorkspaceView: View {
     }
 
     private var contextInspector: some View {
-        ContextInspector(id: selectedID, select: inspect, remove: requestRemoval, browseSubject: openSubject, browseCollection: openCollection)
+        ContextInspector(id: selectedID, select: inspect, remove: requestRemoval, browseSubject: browseSubject, browseCollection: browseCollection)
             .inspectorColumnWidth(min: 270, ideal: 310, max: 380)
     }
 
@@ -147,7 +165,12 @@ struct WorkspaceView: View {
 
     private var observedWorkspace: some View {
         inspectedWorkspace
-            .task { workspace.startMonitoring(library: store) }
+            .task {
+                workspace.startMonitoring(library: store)
+                if !navigationRestored { navigator.restore(preferences.data.history); navigationRestored = true }
+            }
+            .onChange(of: navigator.history) { _, history in preferences.change { $0.history = history } }
+            .onChange(of: scenePhase) { _, phase in if phase != .active { Task { await preferences.flush() } } }
             .onChange(of: store.openedEvent) { _, event in recordOpenedFile(event) }
             .onChange(of: store.library.files) { old, files in reconcileFiles(old: old, files: files) }
             .onChange(of: section) { _, next in changeSection(next) }
@@ -186,8 +209,13 @@ struct WorkspaceView: View {
             store.chooseExportedNotes()
         }
     }
+    private var previewPresentation: some View {
+        notesPresentation.sheet(isPresented: Binding(get: { previewRequest != nil }, set: { if !$0 { previewRequest = nil } })) {
+            if let request = previewRequest { FilePreview(file: request.file, initialSearchTerm: request.term ?? "") }
+        }
+    }
     private var scanPresentation: some View {
-        notesPresentation.sheet(isPresented: $workspace.reviewFolder, onDismiss: workspace.cancelFolderReview) {
+        previewPresentation.sheet(isPresented: $workspace.reviewFolder, onDismiss: workspace.cancelFolderReview) {
             FolderScanReview(select: inspect, openMap: openMap)
         }
     }
@@ -231,7 +259,7 @@ struct WorkspaceView: View {
 
     private func openMap() { section = .graph }
     private func openAllSubjects() { subjectID = nil; subjectRoute = UUID(); section = .subjects }
-    private func openAllCollections() { collectionID = nil; collectionRoute = UUID(); section = .collections }
+    private func openAllCollections() { collectionID = nil; pinnedCollectionsOnly = false; collectionRoute = UUID(); section = .collections }
     private func openSubject(_ id: UUID) { subjectID = id; subjectRoute = UUID(); section = .subjects }
     private func openCollection(_ id: UUID) { collectionID = id; collectionRoute = UUID(); section = .collections }
     private func requestRemoval(_ file: FileItem) { removing = file }
@@ -242,15 +270,12 @@ struct WorkspaceView: View {
     }
     private func recordOpenedFile(_ event: OpenedFileEvent?) {
         guard let event else { return }
-        workspace.change { data in
-            var opened: [UUID: Date] = data.openedFiles ?? [:]
-            opened[event.id] = event.date
-            data.openedFiles = opened
-        }
+        workspace.recordOpened(event.id, at: event.date)
     }
     private func reconcileFiles(old: [FileItem], files: [FileItem]) {
         let validIDs = Set<UUID>(files.map(\.id))
         let collectionIDs = Set<UUID>(store.library.collections.map(\.id))
+        navigator.reconcile(validIDs: validIDs.union(collectionIDs).union(workspace.data.subjects.map(\.id)).union(workspace.data.relationships.map(\.id)))
         let oldByID: [UUID: FileItem] = Dictionary(old.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         workspace.change { data in
             data.reconcile(validIDs: validIDs, additionalGraphIDs: collectionIDs)
@@ -263,6 +288,7 @@ struct WorkspaceView: View {
         if next != .collections { collectionID = nil }
         if next != .subjects { subjectID = nil }
         selectedID = nil; selectedIDs = []; showInspector = false
+        if next == .graph, let pendingGraphID { self.pendingGraphID = nil; inspect(pendingGraphID) }
     }
     private func acceptDroppedFiles(_ urls: [URL]) -> Bool {
         switch currentSection {
@@ -332,7 +358,51 @@ struct WorkspaceView: View {
         guard let percent = workspace.activeScan?.percentCompleted else { return "Scan · counting…" }
         return "Scan · \(percent)%"
     }
-    private func inspect(_ id: UUID) { selectedID = id; showInspector = true }
+    private func inspect(_ id: UUID) { navigate(ExplorationHop(id, source: currentSection == .graph ? navigator.history.current?.itemID : nil)) }
+    private func itemKind(_ id: UUID) -> ExplorationItemKind {
+        if store.library.files.contains(where: { $0.id == id }) { return .file }
+        if workspace.data.subjects.contains(where: { $0.id == id }) { return .subject }
+        if store.library.collections.contains(where: { $0.id == id }) { return .collection }
+        return .relationship
+    }
+    private func navigate(_ hop: ExplorationHop) {
+        selectedID = hop.target; showInspector = true
+        navigator.visit(ExplorationStep(itemID: hop.target, kind: itemKind(hop.target), originID: hop.source, reason: hop.reason))
+        if previewRequest != nil, let file = store.library.files.first(where: { $0.id == hop.target }) { previewRequest = DocumentPreviewRequest(file: file, term: nil) }
+    }
+    private func recordTopic(_ id: UUID, reason: ExplorationReason) {
+        navigator.visit(ExplorationStep(itemID: id, kind: itemKind(id), originID: navigator.history.current?.itemID, reason: reason))
+    }
+    private func restoreHistory(_ index: Int) {
+        guard let step = navigator.jump(index) else { return }
+        if currentSection != .graph && previewRequest == nil {
+            if step.kind == .subject { selectedID = nil; showInspector = false; openSubject(step.itemID); return }
+            if step.kind == .collection { selectedID = nil; showInspector = false; openCollection(step.itemID); return }
+        }
+        selectedID = step.itemID; showInspector = true
+        if previewRequest != nil, let file = store.library.files.first(where: { $0.id == step.itemID }) { previewRequest = DocumentPreviewRequest(file: file, term: nil) }
+    }
+    private func previewDocument(_ id: UUID, term: String?) {
+        guard let file = store.library.files.first(where: { $0.id == id }) else { store.message = "This file is no longer indexed."; return }
+        inspect(id); previewRequest = DocumentPreviewRequest(file: file, term: term)
+    }
+    private func showInMap(_ id: UUID) {
+        previewRequest = nil
+        if currentSection == .graph { inspect(id) } else { pendingGraphID = id; section = .graph }
+    }
+    private func browseSubject(_ id: UUID) { previewRequest = nil; selectedID = nil; showInspector = false; recordTopic(id, reason: .sharedSubject); openSubject(id) }
+    private func browseCollection(_ id: UUID) { previewRequest = nil; selectedID = nil; showInspector = false; recordTopic(id, reason: .sharedCollection); openCollection(id) }
+    private func browseFiles(_ kind: FileKindFilter, favorites: Bool) {
+        previewRequest = nil; fileKind = kind; favoritesOnly = favorites; typeFilter = ""; minimumSizeMB = 0; recentOnly = false; collectionID = nil
+        let target: CatalogSection = kind == .photos || kind == .media ? .media : .files
+        browsingSession.reset(section: target); fileRoute = UUID(); section = target == .media ? .media : .files
+    }
+    private func browsePinnedCollections() {
+        previewRequest = nil; fileKind = .all; favoritesOnly = false; collectionID = nil; pinnedCollectionsOnly = true
+        browsingSession.reset(section: .collections); collectionRoute = UUID(); section = .collections
+    }
+    private func searchFiles(_ term: String) { browseFiles(.all, favorites: false); query = term }
+    private func browseNotes(_ id: UUID?) { previewRequest = nil; initialNoteID = id; noteRoute = UUID(); section = .notes }
     private var libraryContent: some View {
         VStack(alignment: .leading, spacing: 20) {
             ViewThatFits(in: .horizontal) {
@@ -342,8 +412,8 @@ struct WorkspaceView: View {
             FolderBrowser(section: browserSection, query: query, favorites: favoritesOnly, type: typeFilter,
                           minimumBytes: Int64(minimumSizeMB * 1_000_000), recent: recentOnly, sort: sort,
                           listMode: listMode, initialLocation: browserLocation, selectedIDs: selectedIDs,
-                          select: selectFile, remove: requestRemoval)
-                .id(currentSection.rawValue + (currentSection == .collections ? collectionRoute.uuidString : ""))
+                          select: selectFile, remove: requestRemoval, pinnedOnly: currentSection == .collections && pinnedCollectionsOnly)
+                .id(currentSection.rawValue + (currentSection == .collections ? collectionRoute.uuidString : fileRoute.uuidString))
         }.padding(.horizontal, 24).padding(.vertical, 18)
     }
     private var browserSection: CatalogSection {
@@ -362,6 +432,7 @@ struct WorkspaceView: View {
     private var organizationControls: some View {
         HStack {
                 if collectionID != nil { Button("All Collections") { collectionID = nil } }
+                if currentSection == .collections { Toggle("Pinned", isOn: $pinnedCollectionsOnly).toggleStyle(.button) }
                 Button("Filters") { filters.toggle() }.popover(isPresented: $filters) {
                     VStack(alignment: .leading) {
                         TextField("File extension (pdf, png…)", text: $typeFilter)

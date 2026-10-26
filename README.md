@@ -15,7 +15,7 @@ cd Packages/VaultCore
 swift test
 ```
 
-The package contains **52 tests**; the Xcode integration target contains **43 tests**. They have been written but **not executed** here. This Linux machine has neither Swift nor the macOS SDK. [macOS CI](.github/workflows/macos.yml) is provided but has not run. Unsigned CLI builds cannot validate signed sandbox behavior.
+The package contains **69 tests**; the Xcode integration target contains **52 tests**. They have been written but **not executed** here. This Linux machine has neither Swift nor the macOS SDK. [macOS CI](.github/workflows/macos.yml) is provided but has not run. Unsigned CLI builds cannot validate signed sandbox behavior.
 
 ## If Xcode reports “Unable to find module dependency: VaultCore”
 
@@ -76,3 +76,9 @@ All Files, Images & Media, Collections, Subjects, Timeline, Notes, Overview, Sto
 ## File type filters on file workspaces
 
 Use **All Types / Docs / Media / Photos** in the page header. Docs includes PDFs, text documents, presentations, and spreadsheets; Media is audio/video; Photos is images. The choice persists across tabs and parent-folder navigation, updates matching counts, and keeps paged background browsing. All Types restores archives and other files too. Scan/monitor settings remain independent. See [scope, behavior, and pending native validation](docs/FileTypeFilters.md).
+
+## Connected documents and personal dashboard
+
+Select a file for **At a Glance**, source excerpts, key-term search, and **Connected Documents** with real relationship explanations. Preview supports connected reading, back/forward trails, and an optional view of the existing Knowledge Map. Indexed-text comparisons are optional, labeled suggestions, and can be reviewed or dismissed.
+
+In Overview, choose **Customize Dashboard** to show/hide, reorder, resize, and prioritize Notes, Documents, Photos, Media, Recently Accessed, Favorites & Pinned, Continue Exploring, and Storage Snapshot widgets. Settings and trails save locally. Widgets use bounded real catalog results and existing viewers; Notes creation remains the existing import flow. See [behavior, modified files, test results, and macOS acceptance](docs/ConnectedExplorerDashboard.md).

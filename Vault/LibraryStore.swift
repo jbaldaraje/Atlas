@@ -10,6 +10,7 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var library = Library()
     private(set) var graphRevision = UUID()
     let catalogBrowser = CatalogBrowserEngine()
+    let knowledgeGraph: KnowledgeGraphEngine
     @Published private(set) var openedEvent: OpenedFileEvent?
     @Published var candidates: [ImportCandidate] = []
     @Published var presentingImport = false
@@ -26,6 +27,7 @@ final class LibraryStore: ObservableObject {
     private let notesWriter: NotesSnapshotService
 
     init(base: URL = URL.applicationSupportDirectory.appendingPathComponent("Vault", isDirectory: true)) {
+        knowledgeGraph = KnowledgeGraphEngine(base: base)
         repository = LibraryRepository(url: base.appendingPathComponent("library.json"))
         managedDirectory = base.appendingPathComponent("Files", isDirectory: true)
         notesWriter = NotesSnapshotService(root: managedDirectory)
@@ -170,6 +172,17 @@ final class LibraryStore: ObservableObject {
     enum NotesCatalogError: LocalizedError {
         case unavailable
         var errorDescription: String? { "The note catalog could not be saved or is busy. Any completed local snapshot and all Apple Notes originals were preserved. Retry when the library is available." }
+    }
+    func noteExcerpt(_ file: FileItem) async -> String? { try? await notesWriter.excerpt(file) }
+    func toggleFavorite(_ id: UUID) {
+        var next = library
+        guard let index = next.files.firstIndex(where: { $0.id == id }) else { return }
+        next.files[index].favorite.toggle(); commit(next)
+    }
+    func updateMetadata(_ id: UUID, description: String, tags: [String]) {
+        var next = library
+        guard let index = next.files.firstIndex(where: { $0.id == id }) else { return }
+        next.files[index].description = description; next.files[index].tags = tags; commit(next)
     }
     func open(_ file: FileItem) {
         Task {

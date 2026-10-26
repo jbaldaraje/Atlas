@@ -15,6 +15,7 @@ private extension GraphNode {
 struct KnowledgeMap: View {
     @EnvironmentObject private var store: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
+    @EnvironmentObject private var navigator: ExplorationNavigator
     @Environment(\.accessibilityReduceMotion) private var reducedMotion
     @AppStorage("cinematicMotion") private var cinematicMotion = true
     @Environment(\.colorSchemeContrast) private var contrast
@@ -23,6 +24,7 @@ struct KnowledgeMap: View {
     @AppStorage("fileKindFilter") private var fileKind = FileKindFilter.all
     @Binding var selectedID: UUID?
     let select: (UUID) -> Void
+    var compact = false
     @State private var page = 0
     @State private var retryID = UUID()
     @State private var relatedSearch = ""
@@ -44,12 +46,14 @@ struct KnowledgeMap: View {
     @State private var pulse = false
     @State private var pulseStarted = Date()
     @State private var pulseTask: Task<Void, Never>?
+    @State private var projectedSelection: UUID?
 
     private var request: GraphRequest {
         var query = GraphQuery()
         query.text = self.query; query.selectedID = selectedID
         query.subjects = showSubjects; query.collections = showCollections; query.membership = showMembership
-        query.focus = focusMode; query.page = page
+        query.focus = compact || focusMode; query.page = page
+        query.originID = navigator.history.current?.itemID == selectedID ? navigator.history.current?.originID : nil
         query.kind = fileKind
         return GraphRequest(revision: GraphRevision(library: store.graphRevision, workspace: workspace.graphRevision), query: query)
     }
@@ -58,11 +62,12 @@ struct KnowledgeMap: View {
     private var edges: [GraphEdge] { model.projection.edges }
     private func neighbors(_ id: UUID?) -> Set<UUID> {
         guard let id else { return [] }
-        return Set(edges.lazy.filter { $0.source == id || $0.target == id }.flatMap { [$0.source, $0.target] })
+        return Set(edges.lazy.filter { $0.source == id || $0.target == id || model.projection.activePathEdgeIDs.contains($0.id) }.flatMap { [$0.source, $0.target] })
     }
     var body: some View {
         VStack(spacing: 0) {
-            controls.padding(.horizontal, 18).padding(.vertical, 12)
+            if compact { HStack { Label("Map context", systemImage: "point.3.connected.trianglepath.dotted"); Spacer(); Button("Fit", action: fit) }.font(.caption).padding(10) }
+            else { controls.padding(.horizontal, 18).padding(.vertical, 12) }
             Divider().opacity(0.5)
             if store.library.files.isEmpty && workspace.data.subjects.isEmpty && store.library.collections.isEmpty {
                 ContentUnavailableView {
@@ -156,13 +161,13 @@ struct KnowledgeMap: View {
                         for edge in edges where visibleIDs.contains(edge.source) && visibleIDs.contains(edge.target) {
                             guard let a = positions[edge.source], let b = positions[edge.target] else { continue }
                             let start = screen(a), end = screen(b)
-                            let active = edge.source == (hoveredID ?? selectedNodeID) || edge.target == (hoveredID ?? selectedNodeID)
+                            let active = model.projection.activePathEdgeIDs.contains(edge.id) || edge.source == (hoveredID ?? selectedNodeID) || edge.target == (hoveredID ?? selectedNodeID)
                             let curve = edgePath(start, end)
                             let color = edge.membership ? VaultStyle.teal : VaultStyle.lavender
                             context.stroke(curve, with: .color(active ? color.opacity(0.8) : Color.primary.opacity(contrast == .increased ? 0.35 : 0.13)), style: StrokeStyle(lineWidth: active ? 1.4 : 0.8, dash: edge.membership && !active ? [3, 5] : []))
                             if active && pulse && !reducedMotion {
                                 let t = min(1, timeline.date.timeIntervalSince(pulseStarted) / 1.8)
-                                let point = bezierPoint(start, end, t: edge.target == (hoveredID ?? selectedNodeID) ? 1 - t : t)
+                                let point = bezierPoint(start, end, t: edge.target == (hoveredID ?? selectedNodeID) || edge.source == navigator.history.current?.originID ? t : 1 - t)
                                 context.fill(Path(ellipseIn: CGRect(x: point.x - 2, y: point.y - 2, width: 4, height: 4)), with: .color(color.opacity(1 - t)))
                             }
                         }
@@ -220,8 +225,9 @@ struct KnowledgeMap: View {
                     Button("Reload Map") { model.retry(); retryID = UUID() }
                 }
             }
+            if model.projection.contextOutsideFilter { Text("Selected context is outside the current type filter").font(.caption2).foregroundStyle(.secondary) }
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 14) { legend; Spacer(); pageControls; summary }
+                HStack(spacing: 14) { if !compact { legend }; Spacer(); pageControls; summary }
                 HStack { pageControls; Spacer(); summary }
             }
         }.help("Only the current page's nodes and up to 900 connections are rendered. Search covers the entire library; use Focus or page controls to explore more. This does not limit scanning or indexing.")
@@ -294,12 +300,18 @@ struct KnowledgeMap: View {
     }
     private func activate(_ id: UUID) { selectedID = id; select(id) }
     private func prepare() async {
-        await model.load(request, library: store.library, subjects: workspace.data.subjects, relationships: workspace.data.relationships, legacyPositions: workspace.data.graphPositions ?? [:])
+        await model.load(request, library: store.library, subjects: workspace.data.subjects, relationships: workspace.data.relationships, legacyPositions: workspace.data.graphPositions ?? [:], sharedEngine: store.knowledgeGraph)
     }
     private func applyProjection() {
+        let initial = positions.isEmpty
         let changedNodes = Set(positions.keys) != Set(model.positions.keys)
+        let selectionIsReady = model.applied?.query.selectedID == selectedID
+        let selectionChanged = selectionIsReady && projectedSelection != selectedID
         positions = model.positions
-        if changedNodes { fit() }
+        if selectionIsReady { projectedSelection = selectedID }
+        if !initial, selectionChanged, let id = selectedID, let point = positions[id] {
+            withAnimation(reducedMotion || !cinematicMotion ? nil : .easeInOut(duration: 0.28)) { camera.focus(point) }
+        } else if initial || changedNodes { fit() }
     }
     private func fit() {
         camera.fit(nodes.compactMap { positions[$0.id] }, width: viewport.width, height: viewport.height)

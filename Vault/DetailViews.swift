@@ -4,6 +4,7 @@ import VaultCore
 struct FileInspector: View {
     @EnvironmentObject private var store: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
+    @Environment(\.workspaceRouting) private var routing
     let file: FileItem
     let remove: () -> Void
     let select: (UUID) -> Void
@@ -13,18 +14,18 @@ struct FileInspector: View {
     @State private var showMetadata = false
     @State private var showContent = false
     @State private var showMemberships = false
-    @State private var showRelated = false
     @State private var membershipSection = CatalogSection.subjects
     @State private var membershipSearch = ""
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
+                ExplorationTrailView()
                 HStack {
                     Text("FILE DETAILS").font(.system(size: 9, weight: .medium)).tracking(1.5).foregroundStyle(.secondary)
                     Spacer()
-                    Button { var updated = file; updated.favorite.toggle(); store.update(updated) } label: { Image(systemName: file.favorite ? "star.fill" : "star") }.buttonStyle(.plain).help("Toggle favorite").accessibilityLabel(file.favorite ? "Remove favorite" : "Favorite")
+                    Button { store.toggleFavorite(file.id) } label: { Image(systemName: file.favorite ? "star.fill" : "star") }.buttonStyle(.plain).help("Toggle favorite").accessibilityLabel(file.favorite ? "Remove favorite" : "Favorite")
                 }
-                Button { preview = true } label: {
+                Button(action: openPreview) {
                     FileThumbnail(file: file).frame(height: 170).frame(maxWidth: .infinity).quietPanel()
                 }.buttonStyle(.plain).help("Preview file")
                 VStack(alignment: .leading, spacing: 6) {
@@ -32,7 +33,7 @@ struct FileInspector: View {
                     Text("\(file.type.uppercased()) · \(ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file))").font(.caption).foregroundStyle(.secondary)
                     Text(file.ownership == .original ? "Indexed original" : "Vault-managed copy").font(.caption2).foregroundStyle(VaultStyle.teal)
                 }
-                HStack { Button("Open") { store.open(file) }; Button("Preview") { preview = true }; Button { store.reveal(file) } label: { Image(systemName: "arrow.up.forward.square") }.help("Reveal in Finder").accessibilityLabel("Reveal in Finder") }
+                HStack { Button("Open") { store.open(file) }; Button("Preview", action: openPreview); Button { store.reveal(file) } label: { Image(systemName: "arrow.up.forward.square") }.help("Reveal in Finder").accessibilityLabel("Reveal in Finder") }
                 if let source = file.noteSource {
                     DisclosureGroup("Apple Notes source") {
                         VStack(alignment: .leading, spacing: 8) {
@@ -43,15 +44,15 @@ struct FileInspector: View {
                         }.padding(.top, 10)
                     }
                 }
+                DocumentContextPanel(file: file, select: select)
                 Divider()
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Description & tags").font(.headline)
                     TextEditor(text: $description).frame(height: 80).scrollContentBackground(.hidden).padding(8).quietPanel().accessibilityLabel("File description")
                     TextField("Tags, separated by commas", text: $tags)
                     Button("Save Metadata") {
-                        var updated = file; updated.description = description
-                        updated.tags = Array(Set(tags.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
-                        store.update(updated)
+                        let values = Array(Set(tags.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
+                        store.updateMetadata(file.id, description: description, tags: values)
                     }.disabled(description == file.description && tags == file.tags.joined(separator: ", "))
                 }
                 DisclosureGroup("Subjects & collections", isExpanded: $showMemberships) {
@@ -66,9 +67,6 @@ struct FileInspector: View {
                                 .id(membershipSection.rawValue).frame(height: 320)
                         }.padding(.top, 12)
                     }
-                }
-                DisclosureGroup("Related documents", isExpanded: $showRelated) {
-                    if showRelated { RelatedFileLinks(fileID: file.id, select: select).frame(height: 320).padding(.top, 12) }
                 }
                 if let facts = workspace.data.organizationFacts?[file.id] {
                     organizationEvidence(facts)
@@ -90,6 +88,7 @@ struct FileInspector: View {
         }.sheet(isPresented: $preview) { FilePreview(file: file) }
             .onAppear { description = file.description; tags = file.tags.joined(separator: ", ") }
     }
+    private func openPreview() { if let action = routing.preview { action(file.id, nil) } else { preview = true } }
     private func organizationEvidence(_ facts: OrganizationFacts) -> some View {
         DisclosureGroup("Organization evidence") {
             VStack(alignment: .leading, spacing: 10) {

@@ -17,6 +17,8 @@ struct CatalogSource: Sendable {
     let files: [FileItem]
 }
 actor CatalogBrowserEngine {
+    var dashboardRequest: DashboardRequest?
+    var dashboardResult: PreparedDashboard?
     private struct Cached { let revision: CatalogRevision; let index: CatalogIndex }
     private var caches: [String: Cached] = [:]
     private(set) var buildCount = 0

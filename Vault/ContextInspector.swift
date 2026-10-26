@@ -10,13 +10,18 @@ struct ContextInspector: View {
     let browseSubject: (UUID) -> Void
     let browseCollection: (UUID) -> Void
     @State private var removingRelationship = false
+    @State private var context: SelectionContext?
+    @State private var loading = false
+    private var request: SelectionRequest { SelectionRequest(id: id, revision: GraphRevision(library: store.graphRevision, workspace: workspace.graphRevision), metadata: workspace.browserRevision) }
     var body: some View {
         Group {
             if id == nil {
                 ContentUnavailableView("Room for context", systemImage: "sidebar.right", description: Text("Select a file, subject, or collection to inspect it."))
-            } else if let file = store.library.files.first(where: { $0.id == id }) {
+            } else if context?.id != id || loading && context == nil {
+                ProgressView("Preparing context…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let file = context?.file {
                 FileInspector(file: file, remove: { remove(file) }, select: select).id(file.id)
-            } else if let subject = workspace.data.subjects.first(where: { $0.id == id }) {
+            } else if let subject = context?.subject {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         identity(subject.name, kind: "SUBJECT", symbol: "sparkle", color: VaultStyle.teal)
@@ -26,11 +31,10 @@ struct ContextInspector: View {
                         Text("\(subject.fileIDs.count.formatted()) total linked files").font(.caption).foregroundStyle(.secondary)
                         Button("Browse linked folders") { browseSubject(subject.id) }
                         Divider(); Text("Recorded study").font(.headline)
-                        let sessions = workspace.data.sessions.filter { $0.subjectID == subject.id }
-                        Text("\(sessions.count) sessions · \(sessions.reduce(0) { $0 + $1.minutes }) minutes").font(.caption).foregroundStyle(.secondary)
+                        Text("\(context?.sessionCount ?? 0) sessions · \(context?.studyMinutes ?? 0) minutes").font(.caption).foregroundStyle(.secondary)
                     }.padding(22)
                 }
-            } else if let collection = store.library.collections.first(where: { $0.id == id }) {
+            } else if let collection = context?.collection {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         identity(collection.name, kind: "COLLECTION", symbol: "square.stack", color: VaultStyle.amber)
@@ -39,10 +43,10 @@ struct ContextInspector: View {
                         Button("Browse collection folders") { browseCollection(collection.id) }
                     }.padding(22)
                 }
-            } else if let edge = workspace.data.relationships.first(where: { $0.id == id }) {
+            } else if let edge = context?.relationship {
                 VStack(alignment: .leading, spacing: 20) {
                     identity(edge.label, kind: "RELATIONSHIP", symbol: "link", color: VaultStyle.lavender)
-                    fileLinks([edge.source, edge.target])
+                    ForEach(context?.endpoints ?? []) { file in Button(file.filename) { select(file.id) }.font(.callout).lineLimit(2) }
                     Text("This link belongs to Vault and does not modify either file.").font(.caption).foregroundStyle(.secondary)
                     Button("Remove Relationship…", role: .destructive) { removingRelationship = true }
                     Spacer()
@@ -51,6 +55,14 @@ struct ContextInspector: View {
                 ContentUnavailableView("Room for context", systemImage: "sidebar.right", description: Text("Select a file, subject, or collection to inspect it."))
             }
         }.background { ObservatoryBackground(grid: false) }
+        .task(id: request) {
+            guard id != nil else { context = nil; return }
+            loading = true; defer { loading = false }
+            do {
+                let next = try await store.knowledgeGraph.selection(request, library: store.library, workspace: workspace.data)
+                try Task.checkCancellation(); context = next
+            } catch {}
+        }
         .confirmationDialog("Remove this relationship?", isPresented: $removingRelationship, titleVisibility: .visible) {
             Button("Remove Link", role: .destructive) { workspace.change { $0.relationships.removeAll { $0.id == id } } }
             Button("Cancel", role: .cancel) {}
@@ -61,14 +73,6 @@ struct ContextInspector: View {
             Text(kind).font(.system(size: 9, weight: .medium)).tracking(1.4).foregroundStyle(.secondary)
             Image(systemName: symbol).font(.system(size: 30, weight: .light)).foregroundStyle(color).padding(18).quietPanel()
             Text(title).font(.title3.weight(.medium)).textSelection(.enabled)
-        }
-    }
-    private func fileLinks(_ ids: Set<UUID>) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if ids.isEmpty { Text("No linked files yet.").font(.caption).foregroundStyle(.secondary) }
-            ForEach(store.library.files.filter { ids.contains($0.id) }) { file in
-                Button { select(file.id) } label: { Label(file.filename, systemImage: "doc.text").font(.callout).lineLimit(2) }.buttonStyle(.plain)
-            }
         }
     }
 }

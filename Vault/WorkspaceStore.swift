@@ -7,6 +7,7 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var data = Workspace()
     private(set) var graphRevision = UUID()
     private(set) var browserRevision = UUID()
+    private(set) var activityRevision = UUID()
     @Published var error: String?
     private(set) var recoveryListingRevision = UUID()
     @Published var recoveryEntries: [RecoveryEntry] = [] { didSet { recoveryListingRevision = UUID() } }
@@ -55,8 +56,14 @@ final class WorkspaceStore: ObservableObject {
             try JSONEncoder().encode(next).write(to: url, options: .atomic)
             if next.subjects != data.subjects || next.relationships != data.relationships { graphRevision = UUID() }
             if next.subjects != data.subjects || next.sessions != data.sessions || next.locations != data.locations || next.extractedText != data.extractedText || next.lastScan?.sources != data.lastScan?.sources { browserRevision = UUID() }
+            if next.openedFiles != data.openedFiles { activityRevision = UUID() }
             data = next; return true
         } catch { self.error = "Workspace changes could not be saved."; return false }
+    }
+    /// Call only after a successful default-app open or an explicitly requested note read.
+    func recordOpened(_ id: UUID, at date: Date = .now) {
+        guard (data.openedFiles?[id] ?? .distantPast) < date else { return }
+        change { $0.openedFiles = ($0.openedFiles ?? [:]).merging([id: date], uniquingKeysWith: max) }
     }
     func analyze(_ files: [FileItem]) {
         guard !working else { return }; working = true; processingLabel = "Analyzing storage"

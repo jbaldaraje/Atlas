@@ -8,6 +8,7 @@ struct NotesWorkspace: View {
     let query: String
     let select: (UUID) -> Void
     let addNotes: () -> Void
+    var initialNoteID: UUID?
     @State private var selectedID: UUID?
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -21,6 +22,7 @@ struct NotesWorkspace: View {
             FolderBrowser(section: .notes, query: query, listMode: true, select: { selectedID = $0 })
                 .padding(.horizontal, 22).padding(.bottom, 18)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onAppear { selectedID = initialNoteID }
             .sheet(isPresented: Binding(get: { selectedID != nil }, set: { if !$0 { selectedID = nil } })) {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack { Spacer(); Button("Done") { selectedID = nil } }.padding(16)
@@ -75,6 +77,7 @@ private struct NoteSnapshotReader: View {
                         try FileAccessService.withAccess(file) { try String(contentsOf: $0, encoding: .utf8) }
                     }.value
                     try Task.checkCancellation(); text = loaded
+                    workspace.recordOpened(file.id)
                 } catch is CancellationError {} catch { self.error = error.localizedDescription }
             }
     }

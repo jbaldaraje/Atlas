@@ -11,11 +11,13 @@ The header of each file workspace now contains **All Types / Docs / Media / Phot
 
 The filter applies to Overview folder browsing and recent activity, All Files, Images & Media, Subjects, Collections, Timeline file events, Notes snapshots, Knowledge Map, Storage & Cleanup, Recently Deleted, and related-file lists. The Images & Media tab retains its image/audio/video scope: Docs will have no matches there. Notes remain scoped to imported snapshots; selecting Photos does not expose attachments that were never imported.
 
-Parent folders and virtual group counts are computed from matching descendants. Typed Subject/Collection roots omit groups without matching files; All Types retains empty groups. File membership editors still offer all metadata destinations so users can assign a file to an empty subject/collection. The Overview has navigation parents for Subjects/Collections instead of unfiltered file counts in preview cards. The graph retains matching files and their connected subject/collection parents, with visible-endpoint edges only.
+Parent folders and virtual group counts are computed from matching descendants. Typed Subject/Collection roots omit groups without matching files; All Types retains empty groups. File membership editors still offer all metadata destinations so users can assign a file to an empty subject/collection. The Overview has navigation parents for Subjects/Collections instead of unfiltered file counts in preview cards. The graph retains matching files and their connected subject/collection parents, with visible-endpoint edges only. An explicitly selected/origin document can remain as navigation context outside the filter, with an explanatory footer.
 
 Timeline study records are explicitly authored events without a file type. They appear under All Types and are not represented as matching Photos/Media/Docs. Already-open single-file readers/previews are explicit contexts, not reclassified file lists. Secure Vault credentials and Settings are separate from file workspaces and do not display a file-type selector.
 
 Changing the choice resets page numbers and clears the main workspace’s file selection/inspector, avoiding bulk actions on a previous category’s hidden selection. Parent navigation remains intact. Empty folder results show the selected type and provide Show All Types. Scope filters such as collection, subject, keyword, size, favorites, and dates still combine with the type choice.
+
+The new named Overview widgets have independent categories (My Documents, My Photos, and My Media) and bounded 3/6-item previews. Their View All actions enter the existing browser with the corresponding filter. This is stated above the widget grid; ordinary Overview parent-folder browsing still follows the global selection. At a Glance is a single-document context; Connected Documents candidates follow the global filter. See ConnectedExplorerDashboard.md.
 
 ## Performance and storage semantics
 

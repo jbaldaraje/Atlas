@@ -32,12 +32,13 @@ struct OverviewWorkspace: View {
                 Button { showActivity = true } label: { Label("Recent activity", systemImage: "folder.badge.clock") }
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Your parent folders").font(.headline)
-                    FolderBrowser(section: .files, listMode: true, select: select).frame(height: 330)
+                    FolderBrowser(section: .files, listMode: true, select: select, sessionID: "overview.parents").frame(height: 330)
                 }
                 HStack(spacing: 12) {
                     Button(action: openSubjects) { space("Subjects", subtitle: "Browse matching subject groups", symbol: "books.vertical", color: VaultStyle.teal) }.buttonStyle(.plain)
                     Button(action: openCollections) { space("Collections", subtitle: "Browse matching collections", symbol: "square.stack", color: VaultStyle.amber) }.buttonStyle(.plain)
                 }
+                DashboardWidgets(openMap: openMap, select: select)
                 DisclosureGroup("Approved locations", isExpanded: $showLocations) { MonitoringWorkspace().padding(.top, 14) }.font(.callout)
                 Label("Only the files and folders you approve. Everything stays on your Mac.", systemImage: "checkmark.shield").font(.caption).foregroundStyle(.secondary)
             }.padding(26)

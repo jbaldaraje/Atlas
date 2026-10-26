@@ -28,6 +28,7 @@ public struct CatalogQuery: Equatable, Sendable {
     public var favorites = false
     public var type = ""
     public var kind = FileKindFilter.all
+    public var pinnedCollections: Set<UUID>?
     public var minimumBytes: Int64 = 0
     public var recent = false
     public var old = false
@@ -173,6 +174,7 @@ public struct CatalogIndex: Sendable {
             for entry in matches { for id in entry.file.collectionIDs { counts[id, default: 0] += 1 } }
             let membership = query.linkingFileID.flatMap { id in snapshot.library.files.first { $0.id == id } }?.collectionIDs ?? []
             let groups = snapshot.library.collections.filter {
+                (query.pinnedCollections == nil || query.pinnedCollections?.contains($0.id) == true) &&
                 (query.kind == .all || query.linkingFileID != nil || (counts[$0.id] ?? 0) > 0) &&
                 (words.isEmpty || $0.name.localizedCaseInsensitiveContains(query.text) || (counts[$0.id] ?? 0) > 0)
             }.map { collection -> CatalogGroup in

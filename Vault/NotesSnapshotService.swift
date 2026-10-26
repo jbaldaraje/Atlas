@@ -2,6 +2,21 @@ import Foundation
 import VaultCore
 
 actor NotesSnapshotService {
+    /// Ephemeral dashboard excerpt of an already imported plain-text note; never indexed or logged.
+    func excerpt(_ file: FileItem) throws -> String? {
+        guard file.noteSource != nil, file.ownership == .managedCopy, ["txt", "md", "markdown"].contains(file.type.lowercased()) else { return nil }
+        try Task.checkCancellation()
+        return try FileAccessService.withAccess(file) { url in
+            let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
+            var data = try handle.read(upToCount: 2048) ?? Data()
+            for _ in 0..<4 {
+                if let text = String(data: data, encoding: .utf8) { return String(text.prefix(180)).trimmingCharacters(in: .whitespacesAndNewlines) }
+                if !data.isEmpty { data.removeLast() }
+            }
+            return nil
+        }
+    }
+
     private let root: URL
     init(root: URL) { self.root = root.appendingPathComponent("AppleNotes", isDirectory: true) }
     func write(_ snapshot: ImportedNoteSnapshot, id: UUID, existing: FileItem?) throws -> FileItem {

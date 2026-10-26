@@ -6,18 +6,18 @@ Linux, with no Swift compiler, Xcode, or macOS SDK. **No Swift compilation, XCTe
 
 Static checks passed after the expanded implementation:
 
-- Swift grammar parsing of all **57 Swift files**, using tree-sitter-swift. This does not perform type checking or validate native framework APIs.
+- Swift grammar parsing of all **70 Swift files**, using tree-sitter-swift. This does not perform type checking or validate native framework APIs.
 - OpenStep parsing of `project.pbxproj` and resolution of declared object, product, package, configuration, and build-phase references.
-- Exact membership of all **38 application Swift sources** and **17 native integration source memberships** in project references, including new services and tests.
+- Exact membership of all **46 application Swift sources**, **10 core sources**, and **22 native integration source memberships** in project references, including new services and tests.
 - Shared Xcode scheme XML and entitlement plist parsing.
 - App Sandbox, user-selected read/write capability, and app-scoped bookmark configuration; no network client entitlement. Original index bookmarks explicitly request read-only access.
 - `git diff --check` returned success.
 
-Validation parsers were installed from PyPI into `/tmp` and are not app dependencies. The repository's own automated tests are **52 domain/package test methods and 43 macOS integration test methods**; all are currently **unrun**. Syntax parser checks are not substitutes for them.
+Validation parsers were installed from PyPI into `/tmp` and are not app dependencies. The repository's own automated tests are **69 domain/package test methods and 52 macOS integration test methods**; all are currently **unrun**. Syntax parser checks are not substitutes for them.
 
 ## Required next validation
 
-Execute the README's build, package-test, and Xcode-test commands on macOS. The pinned-action GitHub Actions workflow is written but has not run or been published/pushed. Test successful extraction, hashing, recovery, and encryption along with missing/corrupt data, overwrite refusal, original-file preservation, cancelled work, and failed authentication. Hostless tests do not validate signing, Finder Trash permissions, native prompts, or Touch ID.
+Execute the README's build, package-test, and Xcode-test commands on macOS. The pinned-action GitHub Actions workflow is written but is present in the repository; no CI result is asserted from this environment. Test successful extraction, hashing, recovery, and encryption along with missing/corrupt data, overwrite refusal, original-file preservation, cancelled work, and failed authentication. Hostless tests do not validate signing, Finder Trash permissions, native prompts, or Touch ID.
 
 Before real personal-data use, complete signed sandbox tests, VoiceOver/keyboard/appearance/resizing tests, source and Trash recovery failure tests, performance measurements, and independent security review. See Security.md for threat-model assumptions and known transaction/recovery limits. The source implementation spans phases 1–6 but Status.md lists remaining scope. No claim of complete feature coverage or production readiness is made.
 
@@ -100,3 +100,9 @@ Eight package and four native regression methods were added. Current source tota
 Added a persistent native All Types / Docs / Media / Photos selector to file workspace headers and recent activity. A common VaultCore classification filters before folder/group counts and paging, with graph parent relevance, typed timeline events, Notes scope, and background storage/recovery filtering. Scanning/monitoring categories are unchanged. Typed storage projections receive distinct cache revisions, and changes clear previous category selections. See FileTypeFilters.md for scope, limitations, and acceptance.
 
 Seven domain tests were added and the native catalog-cache test now verifies category changes reuse the index. Current source total is 95 methods (52 package, 43 native), all unrun. Static Swift grammar checks pass for 57 files, with native project references/source membership, scheme XML, entitlement plist, and whitespace checks. Swift/Xcode/macOS remain unavailable here; AppStorage persistence, native compilation, picker resizing/accessibility, storage/recovery totals, cancellation, and UI performance require validation on macOS.
+
+## Connected explorer and customizable dashboard
+
+Added 17 package and 9 native regression methods for source-grounded context, explainable/dismissible connection evidence, shared graph caching and actual path edges, bounded large-library projections, history, real activity, widget configuration/storage scopes, atomic preferences/corruption preservation, current-record editing, and UTF-8 note excerpts. Current total: 121 source methods (69 package, 52 native), all unrun. See ConnectedExplorerDashboard.md for changed files and detailed manual acceptance.
+
+Both attempted native commands returned exit 127: `swift test --package-path Packages/VaultCore` reported `swift: command not found`; `xcodebuild -project Vault.xcodeproj -scheme Vault -destination 'platform=macOS' test` reported `xcodebuild: command not found`. Swift grammar checks pass for 70 files; project/source membership checks cover 46 app, 10 core and 22 native test-target sources. Scheme/entitlement parsing and `git diff --check` pass. These checks do not establish Swift type correctness, successful compilation, PDFKit/Quick Look runtime correctness, signed sandbox behavior, or measured performance. Native acceptance remains pending.

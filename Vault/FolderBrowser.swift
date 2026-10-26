@@ -5,6 +5,9 @@ import VaultCore
 struct FolderBrowser: View {
     @EnvironmentObject private var store: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
+    @EnvironmentObject private var browsingSession: BrowsingSessionStore
+    @EnvironmentObject private var preferences: WorkspacePreferencesStore
+    @Environment(\.workspaceRouting) private var routing
     @StateObject private var model = FolderBrowserModel()
     @AppStorage("fileKindFilter") private var fileKind = FileKindFilter.all
     let section: CatalogSection
@@ -26,9 +29,12 @@ struct FolderBrowser: View {
     var cleanup: ((FileItem) -> Void)?
     var openSubject: ((UUID) -> Void)?
     var openCollection: ((UUID) -> Void)?
+    var sessionID: String?
+    var pinnedOnly = false
     @State private var path: [CatalogGroup] = []
     @State private var pageNumber = 0
 
+    private var sessionKey: String { sessionID ?? "\(section.rawValue):\(source?.id ?? "library"):\(initialLocation.subjectID?.uuidString ?? ""):\(initialLocation.collectionID?.uuidString ?? ""):\(linkingFileID?.uuidString ?? ""):\(linkingSubjectID?.uuidString ?? "")" }
     private var location: CatalogLocation { path.last?.location ?? initialLocation }
     private var resultKind: FileKindFilter { linkingFileID == nil ? fileKind : .all }
     private var request: CatalogRequest {
@@ -37,6 +43,7 @@ struct FolderBrowser: View {
         query.recent = recent; query.old = old; query.sort = sort; query.page = pageNumber
         query.linkingFileID = linkingFileID
         query.kind = resultKind
+        if pinnedOnly { query.pinnedCollections = preferences.data.pinnedCollections }
         return CatalogRequest(dataset: source?.id ?? "library", revision: CatalogRevision(library: source?.revision ?? store.graphRevision, workspace: source?.revision ?? workspace.browserRevision), query: query)
     }
     // Never display the previous folder's children while a different navigation request loads.
@@ -60,6 +67,8 @@ struct FolderBrowser: View {
             } else { contents }
             footer
         }
+        .onAppear { if let position = browsingSession.load(sessionKey) { path = position.path; pageNumber = position.page } }
+        .onDisappear { browsingSession.save(sessionKey, path: path, page: pageNumber) }
         .task(id: request) { await load() }
         .onChange(of: query) { _, _ in pageNumber = 0 }
         .onChange(of: favorites) { _, _ in pageNumber = 0 }
@@ -69,6 +78,7 @@ struct FolderBrowser: View {
         .onChange(of: recent) { _, _ in pageNumber = 0 }
         .onChange(of: old) { _, _ in pageNumber = 0 }
         .onChange(of: sort) { _, _ in pageNumber = 0 }
+        .onChange(of: pinnedOnly) { _, _ in pageNumber = 0; path = [] }
         .onChange(of: initialLocation) { _, _ in path = []; pageNumber = 0 }
     }
     private var emptyState: some View {
@@ -113,6 +123,7 @@ struct FolderBrowser: View {
                     workspace.change { data in
                         guard let index = data.subjects.firstIndex(where: { $0.id == subjectID }) else { return }
                         if included { data.subjects[index].fileIDs.insert(fileID) } else { data.subjects[index].fileIDs.remove(fileID) }
+                        data.organizationFacts?[fileID]?.generatedSubjectIDs?.remove(subjectID)
                     }
                 } else if let collectionID = group.location.collectionID, var file = store.library.files.first(where: { $0.id == fileID }) {
                     if included { file.collectionIDs.insert(collectionID) } else { file.collectionIDs.remove(collectionID) }
@@ -121,6 +132,8 @@ struct FolderBrowser: View {
             })).toggleStyle(.checkbox).padding(14).frame(maxWidth: .infinity, alignment: .leading).quietPanel()
         } else {
         Button {
+            if location.subjectID == nil, let id = group.location.subjectID { routing.record?(id, .sharedSubject) }
+            if location.collectionID == nil, let id = group.location.collectionID { routing.record?(id, .sharedCollection) }
             if section == .subjects, location.subjectID == nil, let id = group.location.subjectID, let openSubject { openSubject(id) }
             else if section == .collections, location.collectionID == nil, let id = group.location.collectionID, let openCollection { openCollection(id) }
             else { path.append(group); pageNumber = 0 }
@@ -135,6 +148,9 @@ struct FolderBrowser: View {
                 Spacer(minLength: 0); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
             }.padding(16).frame(maxWidth: .infinity, alignment: .leading).glassSurface(tint: VaultStyle.teal)
         }.buttonStyle(.plain).help(group.subtitle).accessibilityHint("Open to load immediate children")
+            .contextMenu {
+                if let id = group.location.collectionID { Button(preferences.data.pinnedCollections.contains(id) ? "Unpin Collection" : "Pin Collection") { preferences.toggleCollectionPin(id) }.disabled(!preferences.canWrite) }
+            }
         }
     }
     @ViewBuilder private func fileItem(_ file: FileItem, linkedIDs: Set<UUID>) -> some View {
@@ -143,6 +159,7 @@ struct FolderBrowser: View {
                 workspace.change { data in
                     guard let index = data.subjects.firstIndex(where: { $0.id == subjectID }) else { return }
                     if included { data.subjects[index].fileIDs.insert(file.id) } else { data.subjects[index].fileIDs.remove(file.id) }
+                    data.organizationFacts?[file.id]?.generatedSubjectIDs?.remove(subjectID)
                 }
             })) {
                 Label(file.filename, systemImage: VaultStyle.fileSymbol(file.type)).lineLimit(2)
