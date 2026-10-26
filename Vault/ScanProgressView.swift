@@ -33,6 +33,7 @@ struct ScanProgressMeter: View {
         }
     }
     private var detail: String {
+        if scan.paused == true { return "Paused at a safe processing boundary. Resume to continue; completed catalog entries are saved." }
         guard let progress = scan.progress else { return "Completed catalog entries are saved locally." }
         if !progress.countingComplete {
             return "\(progress.countedEntries.formatted()) entries counted · \(progress.totalFiles.formatted()) matching files so far." + (scan.stage.isRunning ? " A percentage appears after counting finishes." : " Counting did not finish.")
@@ -46,6 +47,7 @@ struct ScanProgressMeter: View {
 
 /// Decorative scan radar. Time only animates the illustration, never the progress value.
 struct ScanRadar: View {
+    @EnvironmentObject private var runtime: RuntimeController
     let scan: ScanJob
     var compact = false
     @Environment(\.accessibilityReduceMotion) private var reducedMotion
@@ -54,7 +56,7 @@ struct ScanRadar: View {
     @Environment(\.controlActiveState) private var windowState
     @AppStorage("cinematicMotion") private var cinematicMotion = true
     private var moving: Bool {
-        scan.stage.isRunning && cinematicMotion && !reducedMotion && contrast != .increased && scenePhase == .active && windowState != .inactive
+        scan.paused != true && runtime.effectsAllowed && scan.stage.isRunning && cinematicMotion && !reducedMotion && contrast != .increased && scenePhase == .active && windowState != .inactive
     }
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 24, paused: !moving)) { timeline in
@@ -97,7 +99,7 @@ struct ScanStatusBar: View {
                 ScanRadar(scan: scan, compact: true)
                 VStack(alignment: .leading, spacing: 5) {
                     HStack {
-                        Text(workspace.scanCancellationRequested ? "Cancelling safely…" : scan.stage.title).font(.callout.weight(.medium))
+                        Text(workspace.scanCancellationRequested ? "Cancelling safely…" : workspace.scanPaused ? "Scan paused" : scan.stage.title).font(.callout.weight(.medium))
                         Spacer()
                         Text(scan.stage.isRunning ? "BACKGROUND SCAN" : "\(scan.errors.count) issues")
                             .font(.system(size: 9, weight: .medium, design: .monospaced)).foregroundStyle(.secondary)
@@ -107,6 +109,7 @@ struct ScanStatusBar: View {
                 Button(scan.stage.isRunning ? "Expand" : "View Results") { workspace.showScanResults() }
                     .help("Open scan details").accessibilityIdentifier("expandScan")
                 if scan.stage.isRunning {
+                    Button(workspace.scanPaused ? "Resume" : "Pause") { workspace.setScanPaused(!workspace.scanPaused) }.disabled(workspace.scanCancellationRequested)
                     Button("Cancel") { workspace.cancelScan() }.disabled(workspace.scanCancellationRequested)
                 } else {
                     Button { workspace.dismissScanStatus() } label: { Image(systemName: "xmark") }

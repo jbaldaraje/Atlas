@@ -9,6 +9,7 @@ extension KnowledgeGraphEngine {
     }
 }
 struct ExplorationTrailView: View {
+    @EnvironmentObject private var runtime: RuntimeController
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
     @EnvironmentObject private var navigator: ExplorationNavigator
@@ -33,7 +34,8 @@ struct ExplorationTrailView: View {
                 }.menuStyle(.borderlessButton)
                 Spacer(minLength: 0)
             }.font(.caption).controlSize(.small)
-                .task(id: request) {
+                .task(id: runtime.windowVisible ? request : nil) {
+                    guard runtime.windowVisible else { return }
                     do {
                         let next = try await library.knowledgeGraph.titles(ids: request.ids, revision: request.revision, library: library.library, workspace: workspace.data)
                         try Task.checkCancellation(); titles = next

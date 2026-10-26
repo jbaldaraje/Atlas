@@ -2,6 +2,7 @@ import SwiftUI
 import VaultCore
 
 struct DocumentContextPanel: View {
+    @EnvironmentObject private var runtime: RuntimeController
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
     @EnvironmentObject private var preferences: WorkspacePreferencesStore
@@ -46,7 +47,7 @@ struct DocumentContextPanel: View {
             if let error = model.error { Text(error).font(.caption).foregroundStyle(VaultStyle.amber) }
             if let error = workspace.error { Text(error).font(.caption).foregroundStyle(VaultStyle.amber) }
         }
-        .task(id: request) { await model.load(request, library: library.library, workspace: workspace.data, engine: library.knowledgeGraph) }
+        .task(id: runtime.windowVisible ? request : nil) { if runtime.windowVisible { await model.load(request, library: library.library, workspace: workspace.data, engine: library.knowledgeGraph) } }
         .onChange(of: file.id) { _, _ in page = 0; details = false }
         .onChange(of: kind) { _, _ in page = 0 }
         .onChange(of: compareText) { _, _ in page = 0 }

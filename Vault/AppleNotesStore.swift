@@ -37,6 +37,7 @@ final class AppleNotesStore: ObservableObject {
         }
     }
     func cancel() { operation?.cancel() }
+    func shutdown() async { cancel(); await operation?.value }
     func importSelected(_ ids: Set<String>, account: NotesAccount, folder: NotesFolder, searchable: Bool, library: LibraryStore, workspace: WorkspaceStore) {
         guard !working, !library.busy, !workspace.working else { return }
         let allowed = headers.filter { ids.contains($0.id) && !$0.locked }.map(\.id)

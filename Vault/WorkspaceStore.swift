@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import VaultCore
+import Combine
 
 @MainActor
 final class WorkspaceStore: ObservableObject {
@@ -37,27 +38,46 @@ final class WorkspaceStore: ObservableObject {
     private let extractor = ContentService()
     private var task: Task<Void, Never>?
     private var monitoring: Task<Void, Never>?
+    private var monitorConfiguration: Task<Void, Never>?
+    private var monitorSubscriptions: Set<AnyCancellable> = []
+    private let folderEvents = FolderEventMonitor()
+    private var monitoringChanges = MonitoringChanges()
+    private var monitoringSuspended = false
+    private weak var monitoredLibrary: LibraryStore?
+    let scanControl = ScanControl()
+    let scanJournal: ScanJournal
+    var scanJournalReadable = true
+    @Published var scanPaused = false
     private var writable = true
+    private(set) var mutationRevision = UUID()
     init(base: URL = URL.applicationSupportDirectory.appendingPathComponent("Vault", isDirectory: true)) {
         url = base.appendingPathComponent("workspace.json")
+        scanJournal = ScanJournal(base: base)
         do {
             if FileManager.default.fileExists(atPath: url.path) { data = try JSONDecoder().decode(Workspace.self, from: Data(contentsOf: url)) }
+            let journalURL = ScanJournal.url(base: base)
+            if FileManager.default.fileExists(atPath: journalURL.path) {
+                do { data.lastScan = try JSONDecoder().decode(ScanJob.self, from: Data(contentsOf: journalURL)) }
+                catch { scanJournalReadable = false; self.error = "The scan journal could not be read. It was preserved; repair it before starting another scan." }
+            }
             if var interrupted = data.lastScan, interrupted.stage.isRunning {
                 interrupted.stage = .interrupted
-                change { $0.lastScan = interrupted }
+                interrupted.paused = false; data.lastScan = interrupted
+                // Do not rewrite the large workspace on launch. The next explicit scan journals its state.
             }
-        } catch { writable = false; self.error = "Workspace data could not be read. Writes are disabled; restore a valid workspace.json before restarting." }
+        } catch { writable = false; scanJournalReadable = false; self.error = "Workspace data could not be read. Writes are disabled; restore a valid workspace.json before restarting." }
     }
     @discardableResult func change(_ body: (inout Workspace) -> Void) -> Bool {
         guard writable else { return false }
         var next = data; body(&next)
+        guard next != data else { return true }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(next).write(to: url, options: .atomic)
             if next.subjects != data.subjects || next.relationships != data.relationships { graphRevision = UUID() }
             if next.subjects != data.subjects || next.sessions != data.sessions || next.locations != data.locations || next.extractedText != data.extractedText || next.lastScan?.sources != data.lastScan?.sources { browserRevision = UUID() }
             if next.openedFiles != data.openedFiles { activityRevision = UUID() }
-            data = next; return true
+            mutationRevision = UUID(); data = next; return true
         } catch { self.error = "Workspace changes could not be saved."; return false }
     }
     /// Call only after a successful default-app open or an explicitly requested note read.
@@ -112,25 +132,103 @@ final class WorkspaceStore: ObservableObject {
         return existing.standardizedFileURL == folder.standardizedFileURL
     }
     func startMonitoring(library: LibraryStore) {
-        guard monitoring == nil else { return }
-        monitoring = Task { [weak self, weak library] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(30))
-                guard let self, let library, !Task.isCancelled else { return }
-                if library.busy || self.working { continue }
-                guard self.data.locations.contains(where: { !$0.paused }) else { continue }
-                self.working = true; self.monitoringActive = true
-                for location in self.data.locations where !location.paused {
-                    do {
-                        try await self.refreshMonitoredFolder(location, library: library)
-                    } catch { self.error = "Monitoring \(location.name) failed. Pause, reconnect, or approve the folder again." }
-                }
-                self.working = false; self.monitoringActive = false
+        guard monitoredLibrary == nil else { return }
+        monitoredLibrary = library
+        var previousFiles = library.library.files
+        library.$library.dropFirst().sink { [weak self] next in
+            self?.reconcileCatalog(previous: previousFiles, library: next)
+            previousFiles = next.files
+        }.store(in: &monitorSubscriptions)
+        library.$openedEvent.compactMap { $0 }.sink { [weak self] event in self?.recordOpened(event.id, at: event.date) }.store(in: &monitorSubscriptions)
+        $data.map(\.locations).removeDuplicates().sink { [weak self] locations in self?.configureMonitoring(locations) }.store(in: &monitorSubscriptions)
+        library.$busy.removeDuplicates().filter { !$0 }.sink { [weak self] _ in self?.scheduleMonitoring() }.store(in: &monitorSubscriptions)
+        $working.removeDuplicates().filter { !$0 }.sink { [weak self] _ in self?.scheduleMonitoring() }.store(in: &monitorSubscriptions)
+    }
+    private func reconcileCatalog(previous: [FileItem], library: Library) {
+        let ids = Set(library.files.map(\.id)), collections = Set(library.collections.map(\.id))
+        let old = Dictionary(previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        change { data in
+            data.reconcile(validIDs: ids, additionalGraphIDs: collections)
+            for file in library.files where file.noteSource == nil && (old[file.id]?.modifiedAt != file.modifiedAt || old[file.id]?.changeSignature != file.changeSignature) {
+                data.extractedText.removeValue(forKey: file.id)
             }
         }
     }
+    private func configureMonitoring(_ updatedLocations: [ScanLocation]? = nil) {
+        let locations = updatedLocations ?? data.locations
+        guard !monitoringSuspended else { return }
+        monitoringChanges.reconcile(enabled: Set(locations.filter { !$0.paused }.map(\.id)))
+        monitorConfiguration?.cancel()
+        monitorConfiguration = Task { [weak self] in
+            guard let self else { return }
+            let errors = await self.folderEvents.configure(locations) { [weak self] id in
+                guard let self else { return }
+                self.monitoringChanges.mark(id); self.scheduleMonitoring()
+            }
+            guard !Task.isCancelled else { return }
+            if !errors.isEmpty { self.error = errors.joined(separator: "\n") }
+        }
+    }
+    private func scheduleMonitoring() {
+        guard !monitoringSuspended, monitoring == nil, !monitoringChanges.dirty.isEmpty else { return }
+        monitoring = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(2)) } catch { self?.monitoring = nil; self?.scheduleMonitoring(); return }
+            guard let self else { return }
+            guard let library = self.monitoredLibrary, !library.busy, !self.working else { self.monitoring = nil; return }
+            defer { self.monitoring = nil; self.scheduleMonitoring() }
+            let ids = self.monitoringChanges.take()
+            self.working = true; self.monitoringActive = true
+            for location in self.data.locations where ids.contains(location.id) && !location.paused {
+                do { try await self.refreshMonitoredFolder(location, library: library) }
+                catch is CancellationError { break }
+                catch { self.error = "Monitoring a folder failed. Reconnect its volume or approve the folder again." }
+            }
+            self.working = false; self.monitoringActive = false
+        }
+    }
+    func suspendMonitoring() {
+        monitoringSuspended = true; monitoring?.cancel(); monitorConfiguration?.cancel(); folderEvents.stop()
+    }
+    func resumeMonitoring() { monitoringSuspended = false; configureMonitoring(); scheduleMonitoring() }
+    func publishScanCheckpoint(_ job: ScanJob) {
+        if data.lastScan?.sources != job.sources { browserRevision = UUID() }
+        mutationRevision = UUID(); data.lastScan = job
+    }
+    private func installPreparedWorkspace(_ next: Workspace, bytes: Data) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try bytes.write(to: url, options: .atomic)
+        if next.subjects != data.subjects || next.relationships != data.relationships { graphRevision = UUID() }
+        if next.subjects != data.subjects || next.sessions != data.sessions || next.locations != data.locations || next.extractedText != data.extractedText || next.lastScan?.sources != data.lastScan?.sources { browserRevision = UUID() }
+        mutationRevision = UUID(); data = next
+    }
+    func commitOrganizationInBackground(_ facts: [OrganizationFacts], texts: [UUID: String], library: LibraryStore) async throws -> OrganizationCounts? {
+        guard !facts.isEmpty else { return OrganizationCounts() }
+        guard writable else { return nil }
+        while true {
+            let expectedWorkspace = mutationRevision, expectedLibrary = library.graphRevision
+            let prepared = try await BackgroundCatalogPreparation.organization(facts, texts: texts, library: library.library, workspace: data)
+            try Task.checkCancellation()
+            guard expectedWorkspace == mutationRevision, expectedLibrary == library.graphRevision else { continue }
+            guard library.commitEncoded(prepared.library, bytes: prepared.libraryBytes, expectedRevision: expectedLibrary) else {
+                error = "Organization catalog changes could not be saved."; return nil
+            }
+            do { try installPreparedWorkspace(prepared.workspace, bytes: prepared.workspaceBytes); return prepared.counts }
+            catch { self.error = "Organization metadata could not be saved. Retry the scan; originals are unchanged."; return nil }
+        }
+    }
+    func setScanPaused(_ paused: Bool) {
+        guard scanIsActive else { return }
+        scanPaused = paused; activeScan?.paused = paused
+        Task {
+            if paused { await scanControl.pause() } else { await scanControl.resume() }
+        }
+    }
+    func shutdown() async {
+        suspendMonitoring(); cancelScan(); task?.cancel(); monitorSubscriptions.removeAll()
+        await monitorConfiguration?.value; await monitoring?.value; await scanTask?.value; await task?.value
+    }
     private func refreshMonitoredFolder(_ location: ScanLocation, library: LibraryStore) async throws {
-        let cursor = try FolderScanCursor(bookmark: location.bookmark, excludes: location.excludes, categories: location.fileCategories)
+        let cursor = try await FolderScanCursor.open(bookmark: location.bookmark, excludes: location.excludes, categories: location.fileCategories)
         do {
             while true {
                 try Task.checkCancellation()
@@ -142,14 +240,16 @@ final class WorkspaceStore: ObservableObject {
                 let errors = batch.discovery.errors + synced.errors
                 if !errors.isEmpty { error = errors.joined(separator: "\n") }
                 var facts: [OrganizationFacts] = [], texts: [UUID: String] = [:]
-                for file in library.library.files where synced.merge.fileIDs.contains(file.id) {
+                let snapshot = library.library.files, ids = synced.merge.fileIDs
+                let matchingFiles = await Task.detached(priority: .utility) { snapshot.filter { ids.contains($0.id) } }.value
+                for file in matchingFiles {
                     guard data.locations.contains(where: { $0.id == location.id && !$0.paused && $0.extractContent == location.extractContent && $0.includePhotoLocations == location.includePhotoLocations }) else { break }
                     if needsOrganization(file, source: location) {
                         let result = try await organizer.facts(for: file, source: location, existingSubjects: data.subjects.map(\.name))
                         facts.append(result.0); if let text = result.1 { texts[file.id] = text }
                     }
                 }
-                commitOrganization(facts, texts: texts, library: library)
+                _ = try await commitOrganizationInBackground(facts, texts: texts, library: library)
                 if batch.finished { break }
             }
             await cursor.close()
@@ -175,7 +275,7 @@ final class WorkspaceStore: ObservableObject {
     }
     func retain(_ file: FileItem, library: LibraryStore) {
         guard !working else { return }; working = true; processingLabel = "Retaining a managed copy"
-        Task {
+        task = Task {
             defer { working = false; processingLabel = nil }
             do { try await recovery.retain(file); library.removeFromIndex(file.id); report = nil; refreshRecovery() }
             catch { self.error = error.localizedDescription }
@@ -183,7 +283,7 @@ final class WorkspaceStore: ObservableObject {
     }
     func restore(_ entry: RecoveryEntry, library: LibraryStore) {
         guard !working else { return }; working = true; processingLabel = "Restoring a file"
-        Task {
+        task = Task {
             defer { working = false; processingLabel = nil }
             do {
                 let file = try await recovery.restore(entry)
@@ -194,7 +294,7 @@ final class WorkspaceStore: ObservableObject {
     }
     func permanentlyDelete(_ entry: RecoveryEntry) {
         guard !working else { return }; working = true; processingLabel = "Deleting a retained copy"
-        Task { defer { working = false; processingLabel = nil }; do { try await recovery.finish(entry); refreshRecovery() } catch { self.error = error.localizedDescription } }
+        task = Task { defer { working = false; processingLabel = nil }; do { try await recovery.finish(entry); refreshRecovery() } catch { self.error = error.localizedDescription } }
     }
 
 }

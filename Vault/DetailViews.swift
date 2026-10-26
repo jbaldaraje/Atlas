@@ -171,6 +171,7 @@ struct ImportReview: View {
 }
 
 struct PreferencesView: View {
+    @EnvironmentObject private var runtime: RuntimeController
     @AppStorage("appearance") private var appearance = "dark"
     @AppStorage("cinematicMotion") private var cinematicMotion = true
     @AppStorage("showVaultMascot") private var showMascot = true
@@ -183,6 +184,7 @@ struct PreferencesView: View {
             Toggle("Cinematic animations", isOn: $cinematicMotion)
             Toggle("Show 3D sidebar mascot", isOn: $showMascot)
             Text("Motion pauses in inactive windows and respects Reduce Motion. Glass surfaces respect Reduce Transparency.").font(.caption).foregroundStyle(.secondary)
+            RuntimePreferencesView(notifications: runtime.notifications)
             Text("Local library & privacy").font(.headline)
             Text("Metadata and managed copies are stored inside Vault’s sandbox Application Support directory. Back up this directory along with the originals. Bookmarks are access references, not file backups.")
             Text("No cloud services, remote AI, or telemetry are included. Approved folders can be monitored while Vault runs. Opt-in content extraction is local. Secure records use a separate encrypted store and device-bound Keychain key.")

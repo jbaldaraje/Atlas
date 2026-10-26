@@ -6,14 +6,14 @@ Linux, with no Swift compiler, Xcode, or macOS SDK. **No Swift compilation, XCTe
 
 Static checks passed after the expanded implementation:
 
-- Swift grammar parsing of all **70 Swift files**, using tree-sitter-swift. This does not perform type checking or validate native framework APIs.
+- Swift grammar parsing of all **81 Swift files**, using tree-sitter-swift. This does not perform type checking or validate native framework APIs.
 - OpenStep parsing of `project.pbxproj` and resolution of declared object, product, package, configuration, and build-phase references.
-- Exact membership of all **46 application Swift sources**, **10 core sources**, and **22 native integration source memberships** in project references, including new services and tests.
+- Exact membership of all **54 application Swift sources**, **11 core sources**, and **27 native integration source memberships** in project references, including new services and tests.
 - Shared Xcode scheme XML and entitlement plist parsing.
 - App Sandbox, user-selected read/write capability, and app-scoped bookmark configuration; no network client entitlement. Original index bookmarks explicitly request read-only access.
 - `git diff --check` returned success.
 
-Validation parsers were installed from PyPI into `/tmp` and are not app dependencies. The repository's own automated tests are **69 domain/package test methods and 52 macOS integration test methods**; all are currently **unrun**. Syntax parser checks are not substitutes for them.
+Validation parsers were installed from PyPI into `/tmp` and are not app dependencies. The repository's own automated tests are **73 domain/package test methods and 62 macOS integration test methods**; all are currently **unrun**. Syntax parser checks are not substitutes for them.
 
 ## Required next validation
 
@@ -110,3 +110,9 @@ Both attempted native commands returned exit 127: `swift test --package-path Pac
 ## Preferences initializer compiler correction
 
 A reported macOS build found an unqualified `error =` assignment inside the preferences initializer's `catch` block. Swift resolves that name to the immutable caught `Error`, causing both diagnostics in the screenshot. The assignment now explicitly targets `self.error`, the store's optional message property. Nearby model catch handlers already qualify their assignments. The corrupt-preferences preservation behavior is unchanged and is covered by an existing native regression test, which remains unrun here. Swift grammar parsing of all 70 files, project source-membership checks, and `git diff --check` pass. Swift and Xcode remain unavailable; native compilation must be verified on macOS.
+
+## Lightweight runtime and menu bar mode
+
+Added 14 regression methods (4 package, 10 native) for notification policy, throttling, event coalescing, signature compatibility, pause/cancel, journal recovery/corruption, hash freshness after restored mtime, unchanged catalog synchronization, stale preparation rejection, graph-cache eviction, FSEvents delivery and canceled preview resolution. Current total: 135 methods (73 package, 62 native), all unrun here. See RuntimePerformance.md for source inventory, remaining synchronous bottlenecks and a reproducible Instruments acceptance protocol.
+
+Both attempted commands returned exit 127: swift and xcodebuild are not installed. Static Swift grammar passes for 81 files; project references/exact membership (54 app, 11 core, 27 integration sources), scheme XML, entitlements plist, and whitespace checks pass. There is no native launch, successful compilation, test execution, actual watcher/notification/window behavior or before/after performance measurement from this environment. Those remain release blockers.

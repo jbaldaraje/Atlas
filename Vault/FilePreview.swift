@@ -6,6 +6,7 @@ private struct PreviewLookupRequest: Equatable { let id: UUID; let revision: Gra
 
 /// The existing preview, extended with connected reading; every file keeps its original bookmark.
 struct FilePreview: View {
+    @EnvironmentObject private var runtime: RuntimeController
     let file: FileItem
     var initialSearchTerm = ""
     @EnvironmentObject private var library: LibraryStore
@@ -19,8 +20,8 @@ struct FilePreview: View {
     @State private var currentID: UUID?
     @State private var focused: FileItem?
     @State private var verifiedID: UUID?
-    @State private var url: URL?
-    @State private var scoped = false
+    @State private var resource: PreviewResource?
+    private var url: URL? { resource?.url }
     @State private var error: String?
     @State private var search = ""
     @State private var submittedSearch = ""
@@ -70,11 +71,12 @@ struct FilePreview: View {
             else { ContentUnavailableView("Document left the catalog", systemImage: "doc.questionmark", description: Text("Use the exploration trail to return to another document.")) }
         }.frame(minWidth: 840, idealWidth: 1100, minHeight: 520, idealHeight: 760)
             .background { ObservatoryBackground(grid: false) }
-            .task(id: lookup) {
+            .task(id: runtime.windowVisible ? lookup : nil) {
+                guard runtime.windowVisible else { releaseScope(); return }
                 let request = lookup
                 do {
                     let item = try await library.knowledgeGraph.file(id: request.id, revision: request.revision, library: library.library, workspace: workspace.data)
-                    try Task.checkCancellation(); focused = item; verifiedID = request.id; openCurrent()
+                    try Task.checkCancellation(); focused = item; verifiedID = request.id; await openCurrent()
                 } catch is CancellationError {} catch { self.error = "The indexed document could not be resolved." }
             }
             .onAppear { search = initialSearchTerm; routing.inspect?(ExplorationHop(file.id)); if !initialSearchTerm.isEmpty { find(initialSearchTerm) } }
@@ -87,7 +89,8 @@ struct FilePreview: View {
     }
     private var graphSelection: Binding<UUID?> { Binding(get: { current?.id }, set: { _ in }) }
     @ViewBuilder private func reader(_ file: FileItem) -> some View {
-        if readingMode == 1 {
+        if !runtime.windowVisible { Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity) }
+        else if readingMode == 1 {
             IndexedTextFinder(text: workspace.data.extractedText[file.id], term: submittedSearch)
         } else if let url {
             if supportsPDFSearch { SearchablePDFPreview(url: url, term: submittedSearch) }
@@ -103,18 +106,16 @@ struct FilePreview: View {
         else { routing.showMap?(id) }
     }
     private func find(_ term: String) { search = term; submittedSearch = term; readingMode = supportsPDFSearch ? 0 : 1 }
-    private func openCurrent() {
+    private func openCurrent() async {
         releaseScope(); error = nil
         guard let current else { return }
         do {
-            var stale = false
-            let resolved = try URL(resolvingBookmarkData: current.bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale)
-            guard !stale else { throw FileAccessService.AccessError.staleBookmark }
-            scoped = resolved.startAccessingSecurityScopedResource(); url = resolved
-            guard FileManager.default.fileExists(atPath: resolved.path) else { throw FileAccessService.AccessError.missingFile }
-        } catch { self.error = error.localizedDescription; releaseScope() }
+            let next = try await PreviewResource.resolve(current)
+            try Task.checkCancellation(); resource = next
+        } catch is CancellationError {} catch { self.error = error.localizedDescription; releaseScope() }
     }
-    private func releaseScope() { if scoped { url?.stopAccessingSecurityScopedResource() }; scoped = false; url = nil }
+    private func releaseScope() { resource = nil }
+
 }
 private struct IndexedTextFinder: View {
     let text: String?

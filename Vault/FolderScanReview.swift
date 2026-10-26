@@ -43,7 +43,7 @@ struct FolderScanReview: View {
                 Spacer()
                 Button("Start Scan") { workspace.startFolderScan(library: store) }
                     .buttonStyle(CinematicButtonStyle(prominent: true))
-                    .disabled(workspace.scanCategories.isEmpty || workspace.pendingLocations.isEmpty || workspace.working || store.busy)
+                    .disabled(workspace.scanCategories.isEmpty || workspace.pendingLocations.isEmpty || workspace.working || store.busy || !workspace.scanJournalReadable)
             }
         }
     }
@@ -59,7 +59,7 @@ struct FolderScanReview: View {
                 HStack(spacing: 24) {
                     ScanRadar(scan: scan)
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(workspace.scanCancellationRequested ? "Cancelling safely…" : scan.stage.title).font(.headline)
+                        Text(workspace.scanCancellationRequested ? "Cancelling safely…" : workspace.scanPaused ? "Scan paused" : scan.stage.title).font(.headline)
                         Text(workspace.scanCurrentFile).font(.caption).foregroundStyle(.secondary).lineLimit(2).truncationMode(.middle)
                         Label("Local processing · Originals stay in place", systemImage: "checkmark.shield").font(.caption).foregroundStyle(VaultStyle.teal)
                     }.frame(maxWidth: .infinity, alignment: .leading)
@@ -69,6 +69,7 @@ struct FolderScanReview: View {
                 Text("Minimize to keep browsing while scanning continues. Keep Vault open; completed catalog entries are kept if you cancel.").font(.caption).foregroundStyle(.secondary)
             }
             HStack {
+                Button(workspace.scanPaused ? "Resume Scan" : "Pause Scan") { workspace.setScanPaused(!workspace.scanPaused) }.disabled(workspace.scanCancellationRequested)
                 Spacer()
                 Button(workspace.scanCancellationRequested ? "Cancelling…" : "Cancel Scan") { workspace.cancelScan() }
                     .disabled(workspace.scanCancellationRequested)
@@ -107,7 +108,7 @@ struct FolderScanReview: View {
             resultLinks(scan)
             HStack {
                 Button("Done") { dismiss() }
-                Button("Retry Scan") { workspace.retryScan(library: store) }.disabled(workspace.working || store.busy)
+                Button("Retry Scan") { workspace.retryScan(library: store) }.disabled(workspace.working || store.busy || !workspace.scanJournalReadable)
                 Spacer()
                 Button("Open Knowledge Map") { openMap(); dismiss() }
             }

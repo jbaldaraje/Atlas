@@ -18,12 +18,16 @@ struct StorageReport: Sendable {
     var allocatedBytes: Int64 { files.reduce(0) { $0 + $1.allocated } }
 }
 actor AnalysisService {
-    func analyze(_ files: [FileItem], hash: Bool, progress: (@Sendable (Int, Int) -> Void)? = nil) throws -> StorageReport {
-        var report = StorageReport()
+    private struct CachedDigest { let signature: String; let value: String }
+    private var digests: [String: CachedDigest] = [:]
+    private(set) var hashComputationCount = 0
+    func analyze(_ files: [FileItem], hash: Bool, control: ScanControl? = nil, progress: (@Sendable (Int, Int) -> Void)? = nil) async throws -> StorageReport {
+        var report = StorageReport(), progressGate = ProgressThrottle()
         var identities = Set<String>()
         var candidates: [(FileItem, String, Int64, Date?)] = []
         for (index, file) in files.enumerated() {
             try Task.checkCancellation()
+            if let control { try await control.wait() }
             do {
                 let entry = try FileAccessService.withAccess(file) { url -> (FileItem, String, Int64, Date?) in
                     let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .totalFileAllocatedSizeKey, .contentModificationDateKey])
@@ -36,15 +40,23 @@ actor AnalysisService {
                 if identities.insert(entry.1).inserted { candidates.append(entry) }
             } catch { report.failedIDs.append(file.id) }
             // Throttle UI notifications; this pass accounts for unavailable/hard-linked entries too.
-            if index % 64 == 0 || index + 1 == files.count { progress?(index + 1, files.count) }
+            if progressGate.shouldPublish(now: ProcessInfo.processInfo.systemUptime, final: index + 1 == files.count) { progress?(index + 1, files.count) }
         }
         let sizes = Dictionary(grouping: candidates, by: { $0.0.size })
         for (file, identity, allocated, modified) in candidates {
             try Task.checkCancellation()
+            if let control { try await control.wait() }
             do {
                 var digest: String?
                 if hash, (sizes[file.size]?.count ?? 0) > 1 {
                     digest = try FileAccessService.withAccess(file) { url in
+                        let values = try url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                        guard Int64(values.fileSize ?? -1) == file.size, values.contentModificationDate == modified,
+                              FileAccessService.identity(at: url) == identity else { throw CocoaError(.fileReadUnknown) }
+                        let before = FileAccessService.changeSignature(at: url)
+                        if let before, !before.hasSuffix(":0"), let cached = digests[identity], cached.signature == before,
+                           FileAccessService.changeSignature(at: url) == before { return cached.value }
+                        hashComputationCount += 1
                         let handle = try FileHandle(forReadingFrom: url)
                         defer { try? handle.close() }
                         var hasher = SHA256()
@@ -52,8 +64,12 @@ actor AnalysisService {
                             try Task.checkCancellation(); hasher.update(data: chunk)
                         }
                         let after = try url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-                        guard Int64(after.fileSize ?? -1) == file.size, after.contentModificationDate == modified else { throw CocoaError(.fileReadUnknown) }
-                        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+                        guard Int64(after.fileSize ?? -1) == file.size, after.contentModificationDate == modified,
+                              before != nil, FileAccessService.changeSignature(at: url) == before, FileAccessService.identity(at: url) == identity else { throw CocoaError(.fileReadUnknown) }
+                        let result = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+                        if digests.count >= 256 { digests.removeAll(keepingCapacity: true) }
+                        if let before, !before.hasSuffix(":0") { digests[identity] = CachedDigest(signature: before, value: result) }
+                        return result
                     }
                 }
                 report.files.append(AnalyzedFile(file: file, identity: identity, allocated: allocated, digest: digest))

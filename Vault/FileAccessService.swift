@@ -1,6 +1,7 @@
 import AppKit
 import UniformTypeIdentifiers
 import VaultCore
+import Darwin
 
 struct ImportCandidate: Identifiable, Sendable {
     let id = UUID()
@@ -45,7 +46,7 @@ struct FileAccessService: Sendable {
         try await discoverFolder(bookmark, excludes: excludes, categories: categories).candidates
     }
     static func discoverFolder(_ bookmark: Data, excludes: [String], categories: Set<ScanFileCategory>, progress: (@Sendable (Int) -> Void)? = nil) async throws -> FolderDiscovery {
-        let cursor = try FolderScanCursor(bookmark: bookmark, excludes: excludes, categories: categories)
+        let cursor = try await FolderScanCursor.open(bookmark: bookmark, excludes: excludes, categories: categories)
         var report = FolderDiscovery()
         do {
             while true {
@@ -68,6 +69,13 @@ struct FileAccessService: Sendable {
               let device = attributes[.systemNumber] as? NSNumber, let inode = attributes[.systemFileNumber] as? NSNumber else { return nil }
         return "\(device):\(inode)"
     }
+    /// Device/inode plus size, nanosecond modification AND inode-change times.
+    /// A missing signature never proves freshness; no cached content is trusted on mtime alone.
+    static func changeSignature(at url: URL) -> String? {
+        var info = stat()
+        guard lstat(url.path, &info) == 0, (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) else { return nil }
+        return "\(info.st_dev):\(info.st_ino):\(info.st_size):\(info.st_mtimespec.tv_sec):\(info.st_mtimespec.tv_nsec):\(info.st_ctimespec.tv_sec):\(info.st_ctimespec.tv_nsec)"
+    }
     private static func category(for url: URL, contentType: UTType?) -> ScanFileCategory {
         let byExtension = ScanFileCategory.classify(fileExtension: url.pathExtension)
         guard byExtension == .other, let contentType else { return byExtension }
@@ -80,12 +88,15 @@ struct FileAccessService: Sendable {
         if contentType.conforms(to: .text) { return .documents }
         return .other
     }
-    static func run(_ candidates: [ImportCandidate], copy: Bool, managedDirectory: URL, existingPaths: Set<String>, progress: (@Sendable (Int, Int) -> Void)? = nil) async -> ImportReport {
+    static func run(_ candidates: [ImportCandidate], copy: Bool, managedDirectory: URL, existingPaths: Set<String>, existingByPath: [String: FileItem] = [:], control: ScanControl? = nil, progress: (@Sendable (Int, Int) -> Void)? = nil) async -> ImportReport {
         let worker = Task.detached(priority: .userInitiated) {
-            var report = ImportReport()
+            var report = ImportReport(), progressGate = ProgressThrottle()
             for (index, candidate) in candidates.enumerated() {
                 if Task.isCancelled { report.cancelled = true; break }
-                defer { progress?(index + 1, candidates.count) }
+                do { try await control?.wait() } catch { report.cancelled = true; break }
+                defer {
+                    if progressGate.shouldPublish(now: ProcessInfo.processInfo.systemUptime, final: index + 1 == candidates.count) { progress?(index + 1, candidates.count) }
+                }
                 let source = candidate.url
                 if !copy && existingPaths.contains(source.standardizedFileURL.path) { report.skipped += 1; continue }
                 let access = source.startAccessingSecurityScopedResource()
@@ -94,6 +105,14 @@ struct FileAccessService: Sendable {
                 do {
                     let selected = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
                     guard selected.isRegularFile == true, selected.isSymbolicLink != true else { throw AccessError.regularFilesOnly }
+                    let signature = changeSignature(at: source)
+                    if !copy, let signature, !signature.hasSuffix(":0"), let old = existingByPath[source.standardizedFileURL.path], old.changeSignature == signature {
+                        var stale = false
+                        if let resolved = try? URL(resolvingBookmarkData: old.bookmark, options: [.withSecurityScope, .withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale), !stale,
+                           resolved.resolvingSymlinksInPath().standardizedFileURL == source.resolvingSymlinksInPath().standardizedFileURL {
+                            report.items.append(old); continue
+                        }
+                    }
                     var destination = source
                     if copy {
                         try FileManager.default.createDirectory(at: managedDirectory, withIntermediateDirectories: true)
@@ -111,7 +130,7 @@ struct FileAccessService: Sendable {
                     let values = try destination.resourceValues(forKeys: [.fileSizeKey, .creationDateKey, .contentModificationDateKey])
                     let bookmark = try destination.bookmarkData(options: copy ? [.withSecurityScope] : [.withSecurityScope, .securityScopeAllowOnlyReadAccess], includingResourceValuesForKeys: nil, relativeTo: nil)
                     var file = FileItem(filename: source.lastPathComponent, type: candidate.type, bookmark: bookmark, originalLocation: destination.standardizedFileURL.path, ownership: copy ? .managedCopy : .original, size: Int64(values.fileSize ?? 0), createdAt: values.creationDate, modifiedAt: values.contentModificationDate)
-                    file.fileIdentity = identity(at: destination)
+                    file.fileIdentity = identity(at: destination); file.changeSignature = changeSignature(at: destination)
                     report.items.append(file)
                 } catch {
                     if let ownedURL { try? FileManager.default.removeItem(at: ownedURL) }
@@ -124,7 +143,7 @@ struct FileAccessService: Sendable {
     }
     static func withAccess<T>(_ file: FileItem, operation: (URL) throws -> T) throws -> T {
         var stale = false
-        let url = try URL(resolvingBookmarkData: file.bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale)
+        let url = try URL(resolvingBookmarkData: file.bookmark, options: [.withSecurityScope, .withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale)
         guard !stale else { throw AccessError.staleBookmark }
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
@@ -133,7 +152,7 @@ struct FileAccessService: Sendable {
     }
     static func withAsyncAccess<T>(_ file: FileItem, operation: (URL) async throws -> T) async throws -> T {
         var stale = false
-        let url = try URL(resolvingBookmarkData: file.bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale)
+        let url = try URL(resolvingBookmarkData: file.bookmark, options: [.withSecurityScope, .withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale)
         guard !stale else { throw AccessError.staleBookmark }
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
@@ -183,7 +202,7 @@ actor FolderScanCursor {
 
     init(bookmark: Data, excludes: [String], categories: Set<ScanFileCategory>) throws {
         var stale = false
-        let folder = try URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale)
+        let folder = try URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope, .withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale)
         guard !stale else { throw FileAccessService.AccessError.staleBookmark }
         let scope = folder.startAccessingSecurityScopedResource()
         let errors = FolderTraversalErrors()
@@ -198,6 +217,15 @@ actor FolderScanCursor {
     }
     deinit { if scoped { folder.stopAccessingSecurityScopedResource() } }
 
+    static func open(bookmark: Data, excludes: [String], categories: Set<ScanFileCategory>) async throws -> FolderScanCursor {
+        let worker = Task.detached(priority: .utility) {
+            try Task.checkCancellation()
+            let cursor = try FolderScanCursor(bookmark: bookmark, excludes: excludes, categories: categories)
+            if Task.isCancelled { await cursor.close(); throw CancellationError() }
+            return cursor
+        }
+        return try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })
+    }
     func nextBatch() throws -> FolderScanBatch {
         try Task.checkCancellation()
         guard !finished, let enumerator else { return FolderScanBatch(discovery: FolderDiscovery(), finished: true) }
@@ -207,6 +235,8 @@ actor FolderScanCursor {
             try Task.checkCancellation()
             guard let url = enumerator.nextObject() as? URL else { close(); break }
             visited += 1
+            let ownLibrary = URL.applicationSupportDirectory.appendingPathComponent("Vault", isDirectory: true).standardizedFileURL.path
+            if url.path == ownLibrary || url.path.hasPrefix(ownLibrary + "/") { enumerator.skipDescendants(); continue }
             let relative = String(url.path.dropFirst(folder.path.count + 1))
             if excludes.contains(where: { relative == $0 || relative.hasPrefix($0 + "/") }) { enumerator.skipDescendants(); continue }
             do {

@@ -16,6 +16,7 @@ public struct FileItem: Identifiable, Codable, Equatable, Sendable {
     public var tags: [String]
     public var collectionIDs: Set<UUID>
     public var fileIdentity: String? = nil
+    public var changeSignature: String? = nil
     public var noteSource: ImportedNoteSource? = nil
     public var favorite: Bool
     public init(id: UUID = UUID(), filename: String, type: String, bookmark: Data, originalLocation: String, ownership: StorageOwnership, size: Int64, createdAt: Date? = nil, modifiedAt: Date? = nil, indexedAt: Date = .now, description: String = "", tags: [String] = [], collectionIDs: Set<UUID> = [], favorite: Bool = false) {
@@ -55,10 +56,10 @@ public struct Library: Codable, Equatable, Sendable {
             let index = fresh.fileIdentity.flatMap { identities[$0] } ?? paths[fresh.originalLocation]
             if let index {
                 var old = files[index]
-                let changed = old.size != fresh.size || old.modifiedAt != fresh.modifiedAt || old.originalLocation != fresh.originalLocation
+                let changed = old.size != fresh.size || old.modifiedAt != fresh.modifiedAt || old.originalLocation != fresh.originalLocation || old.changeSignature != fresh.changeSignature || old.fileIdentity != fresh.fileIdentity || old.bookmark != fresh.bookmark || old.filename != fresh.filename || old.type != fresh.type
                 old.filename = fresh.filename; old.type = fresh.type; old.bookmark = fresh.bookmark
                 old.size = fresh.size; old.createdAt = fresh.createdAt; old.modifiedAt = fresh.modifiedAt
-                old.originalLocation = fresh.originalLocation; old.fileIdentity = fresh.fileIdentity
+                old.originalLocation = fresh.originalLocation; old.fileIdentity = fresh.fileIdentity; old.changeSignature = fresh.changeSignature
                 files[index] = old
                 result.fileIDs.insert(old.id)
                 if changed { result.updated.insert(old.id) } else { result.unchanged += 1 }

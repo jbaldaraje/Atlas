@@ -2,6 +2,8 @@ import SwiftUI
 
 @main
 struct VaultApp: App {
+    @NSApplicationDelegateAdaptor(VaultApplicationDelegate.self) private var applicationDelegate
+    @StateObject private var runtime = RuntimeController()
     @AppStorage("appearance") private var appearance = "dark"
     @StateObject private var store = LibraryStore()
     @StateObject private var workspace = WorkspaceStore()
@@ -10,8 +12,13 @@ struct VaultApp: App {
     @StateObject private var notes = AppleNotesStore()
     @StateObject private var preferences = WorkspacePreferencesStore()
     var body: some Scene {
-        WindowGroup {
-            WorkspaceView().environmentObject(store).environmentObject(workspace).environmentObject(secure).environmentObject(trash).environmentObject(notes).environmentObject(preferences)
+        Window("Vault", id: "workspace") {
+            WorkspaceView().environmentObject(store).environmentObject(workspace).environmentObject(secure).environmentObject(trash).environmentObject(notes).environmentObject(preferences).environmentObject(runtime)
+                .background { RuntimeWindowBridge(runtime: runtime).frame(width: 0, height: 0) }
+                .task {
+                    applicationDelegate.runtime = runtime
+                    runtime.bind(library: store, workspace: workspace, secure: secure, notes: notes, preferences: preferences)
+                }
                 .frame(minWidth: 1000, minHeight: 680)
                 .buttonStyle(CinematicButtonStyle())
                 .preferredColorScheme(appearance == "system" ? nil : appearance == "dark" ? .dark : .light)
@@ -22,6 +29,7 @@ struct VaultApp: App {
                 Button("Add Files…") { store.chooseFiles() }.keyboardShortcut("i", modifiers: [.command]).disabled(store.busy || store.loadFailed || workspace.working || notes.working)
             }
         }
-        Settings { PreferencesView().padding(28).frame(width: 440).buttonStyle(CinematicButtonStyle()).preferredColorScheme(appearance == "system" ? nil : appearance == "dark" ? .dark : .light) }
+        MenuBarExtra("Vault", systemImage: "square.stack.3d.up") { MenuBarWorkspace(runtime: runtime, workspace: workspace, library: store) }
+        Settings { ScrollView { PreferencesView().environmentObject(runtime).padding(28) }.frame(width: 520, height: 650).buttonStyle(CinematicButtonStyle()).preferredColorScheme(appearance == "system" ? nil : appearance == "dark" ? .dark : .light) }
     }
 }

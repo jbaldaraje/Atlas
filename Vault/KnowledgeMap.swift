@@ -13,6 +13,7 @@ private extension GraphNode {
 }
 
 struct KnowledgeMap: View {
+    @EnvironmentObject private var runtime: RuntimeController
     @EnvironmentObject private var store: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
     @EnvironmentObject private var navigator: ExplorationNavigator
@@ -88,14 +89,14 @@ struct KnowledgeMap: View {
                         }.padding(.vertical, 7).contentShape(Rectangle())
                     }.buttonStyle(.plain).contextMenu { nodeActions(node) }
                 }.scrollContentBackground(.hidden).background { ObservatoryBackground(grid: false) }
-            } else {
+            } else if runtime.windowVisible {
                 scene
-            }
+            } else { Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity) }
             Divider().opacity(0.5)
             footer.padding(.horizontal, 20).padding(.vertical, 10)
         }
-        .task(id: request) { await prepare() }
-        .task(id: retryID) { if model.error != nil { await prepare() } }
+        .task(id: runtime.windowVisible ? request : nil) { if runtime.windowVisible { await prepare() } }
+        .task(id: retryID) { if runtime.windowVisible && model.error != nil { await prepare() } }
         .onAppear { applyProjection() }
         .onChange(of: model.generation) { _, _ in applyProjection() }
         .onChange(of: query) { _, _ in page = 0 }
@@ -155,7 +156,7 @@ struct KnowledgeMap: View {
                     if panStart == nil { panStart = camera.pan }
                     camera.pan = SpatialPoint(x: (panStart?.x ?? 0) + value.translation.width, y: (panStart?.y ?? 0) + value.translation.height)
                 }.onEnded { _ in panStart = nil })
-                TimelineView(.animation(minimumInterval: 1.0 / 24, paused: !pulse || reducedMotion || !cinematicMotion || scenePhase != .active)) { timeline in
+                TimelineView(.animation(minimumInterval: 1.0 / 24, paused: !runtime.effectsAllowed || !pulse || reducedMotion || !cinematicMotion || scenePhase != .active)) { timeline in
                     Canvas { context, _ in
                         let visibleIDs = Set(visible.map(\.id))
                         for edge in edges where visibleIDs.contains(edge.source) && visibleIDs.contains(edge.target) {
@@ -165,7 +166,7 @@ struct KnowledgeMap: View {
                             let curve = edgePath(start, end)
                             let color = edge.membership ? VaultStyle.teal : VaultStyle.lavender
                             context.stroke(curve, with: .color(active ? color.opacity(0.8) : Color.primary.opacity(contrast == .increased ? 0.35 : 0.13)), style: StrokeStyle(lineWidth: active ? 1.4 : 0.8, dash: edge.membership && !active ? [3, 5] : []))
-                            if active && pulse && !reducedMotion {
+                            if active && pulse && !reducedMotion && runtime.effectsAllowed {
                                 let t = min(1, timeline.date.timeIntervalSince(pulseStarted) / 1.8)
                                 let point = bezierPoint(start, end, t: edge.target == (hoveredID ?? selectedNodeID) || edge.source == navigator.history.current?.originID ? t : 1 - t)
                                 context.fill(Path(ellipseIn: CGRect(x: point.x - 2, y: point.y - 2, width: 4, height: 4)), with: .color(color.opacity(1 - t)))

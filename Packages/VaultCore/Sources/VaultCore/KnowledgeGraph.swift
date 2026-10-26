@@ -148,7 +148,12 @@ public struct KnowledgeGraphIndex: Sendable {
                     if files[other] != nil { secondary.insert(other) }
                 }
             }
-            related.formUnion(secondary.sorted { $0.uuidString < $1.uuidString }.prefix(80))
+            // Keep source-order context without sorting an entire large subject on every selection.
+            var remaining = 80
+            for node in nodes where secondary.contains(node.id) && query.kind.includes(fileExtension: node.type) {
+                related.insert(node.id); remaining -= 1
+                if remaining == 0 { break }
+            }
         }
         if let origin = query.originID, byID[origin] != nil { related.insert(origin) }
         if allowed != nil {

@@ -41,6 +41,7 @@ final class DashboardModel: ObservableObject {
     @Published private(set) var applied: DashboardRequest?
     private var token = UUID()
     private var excerpts: [String: String] = [:]
+    func releaseTransientContent() { result = nil; applied = nil; excerpts.removeAll(); token = UUID() }
     func load(_ request: DashboardRequest, library: LibraryStore, workspace: WorkspaceStore, preferences: WorkspacePreferencesStore) async {
         guard applied != request else { return }
         let current = UUID(); token = current; loading = true; error = nil

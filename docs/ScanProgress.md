@@ -12,7 +12,7 @@ After counting, the UI shows **Estimated overall progress**, a loading bar, and 
 
 Counts reflect references traversed, so overlapping approved folders may contribute work twice while still producing only one catalog item. If files appear or disappear between passes, the denominator adjusts. Progress may change accordingly. This is a measured workload estimate, not a time estimate: PDF extraction, network volumes, and file types have different costs. Counting adds an extra directory traversal, while memory buffering remains bounded. The existing catalog/JSON persistence costs remain.
 
-The modal, compact bar, header, and sidebar mascot share one scan job. Optional progress fields preserve decoding of older jobs. Progress/counters are saved at existing checkpoints; the animation never drives them.
+The modal, compact bar, header, and sidebar mascot share one scan job. Optional progress fields preserve decoding of older jobs. Progress/counters are saved at checkpoints in the separate actor-owned scan-job.json journal; the animation never drives them.
 
 ## Appearance and accessibility
 
@@ -41,3 +41,5 @@ On macOS, build and run the README test commands, then:
 6. Exercise a large multi-chunk tree, light/dark appearance, window/inspector resizing, VoiceOver, Reduce Motion, Reduce Transparency, increased contrast, inactive windows, and disabled Cinematic animations. Confirm animation pauses without pausing the job. Quit/relaunch mid-job and verify interrupted/retry behavior.
 
 No macOS compilation, native execution, or rendered UI validation occurred in this cloud task.
+
+Pause/Resume now shares a timer-free cooperative gate across the sheet, status bar and native menu. Hidden/minimized windows can release previews/rendering while a job continues; sleep pauses cooperatively, and explicit Quit stops work and waits for supported durable saves. Retry after restart re-enumerates safely rather than trusting an old directory offset. See RuntimePerformance.md for journal migration, quiet notifications, lifecycle limits and pending Mac profiling.

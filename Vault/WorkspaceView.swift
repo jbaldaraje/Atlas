@@ -24,6 +24,8 @@ private enum Section: String, CaseIterable, Identifiable {
 }
 
 struct WorkspaceView: View {
+    @EnvironmentObject private var runtime: RuntimeController
+    @FocusState private var searchFocused: Bool
     @EnvironmentObject private var store: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
     @EnvironmentObject private var trash: NativeTrashService
@@ -69,6 +71,9 @@ struct WorkspaceView: View {
     // Keep independently type-checked boundaries between layout, events, and presentation.
     var body: some View {
         removalPresentation.environmentObject(navigator).environmentObject(browsingSession).environment(\.workspaceRouting, routing)
+        .onChange(of: runtime.command) { _, command in if let command { handleRuntimeCommand(command) } }
+        .onChange(of: store.library.files) { old, files in reconcileFiles(old: old, files: files) }
+        .onChange(of: section) { _, next in changeSection(next) }
     }
     private var routing: WorkspaceRouting {
         WorkspaceRouting(inspect: navigate, restore: restoreHistory, preview: previewDocument, showMap: showInMap,
@@ -127,6 +132,7 @@ struct WorkspaceView: View {
             .inspector(isPresented: $showInspector) { contextInspector }
             .tint(accent)
             .searchable(text: $query, prompt: "Search names, descriptions, and tags")
+            .searchFocused($searchFocused)
             .toolbar { workspaceToolbar }
     }
 
@@ -167,13 +173,13 @@ struct WorkspaceView: View {
         inspectedWorkspace
             .task {
                 workspace.startMonitoring(library: store)
-                if !navigationRestored { navigator.restore(preferences.data.history); navigationRestored = true }
+                if !navigationRestored {
+                    navigator.restore(preferences.data.history); navigationRestored = true
+                    if let command = runtime.command { handleRuntimeCommand(command) }
+                }
             }
             .onChange(of: navigator.history) { _, history in preferences.change { $0.history = history } }
             .onChange(of: scenePhase) { _, phase in if phase != .active { Task { await preferences.flush() } } }
-            .onChange(of: store.openedEvent) { _, event in recordOpenedFile(event) }
-            .onChange(of: store.library.files) { old, files in reconcileFiles(old: old, files: files) }
-            .onChange(of: section) { _, next in changeSection(next) }
             .onChange(of: fileKind) { _, _ in selectedIDs = []; selectedID = nil; showInspector = false }
             .dropDestination(for: URL.self) { urls, _ in acceptDroppedFiles(urls) }
     }
@@ -240,13 +246,13 @@ struct WorkspaceView: View {
     }
 
     private var hasWorkspaceError: Binding<Bool> {
-        Binding(get: { workspace.error != nil }, set: { if !$0 { workspace.error = nil } })
+        Binding(get: { runtime.windowVisible && workspace.error != nil }, set: { if !$0 && runtime.windowVisible { workspace.error = nil } })
     }
     private var hasFilesystemError: Binding<Bool> {
-        Binding(get: { trash.error != nil }, set: { if !$0 { trash.error = nil } })
+        Binding(get: { runtime.windowVisible && trash.error != nil }, set: { if !$0 && runtime.windowVisible { trash.error = nil } })
     }
     private var hasLibraryMessage: Binding<Bool> {
-        Binding(get: { store.message != nil }, set: { if !$0 { store.message = nil } })
+        Binding(get: { runtime.windowVisible && store.message != nil }, set: { if !$0 && runtime.windowVisible { store.message = nil } })
     }
     private var isRemoving: Binding<Bool> {
         Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })
@@ -268,21 +274,9 @@ struct WorkspaceView: View {
         if let file = removing { store.removeFromIndex(file.id); selectedID = nil }
         removing = nil
     }
-    private func recordOpenedFile(_ event: OpenedFileEvent?) {
-        guard let event else { return }
-        workspace.recordOpened(event.id, at: event.date)
-    }
     private func reconcileFiles(old: [FileItem], files: [FileItem]) {
-        let validIDs = Set<UUID>(files.map(\.id))
-        let collectionIDs = Set<UUID>(store.library.collections.map(\.id))
+        let validIDs = Set<UUID>(files.map(\.id)), collectionIDs = Set<UUID>(store.library.collections.map(\.id))
         navigator.reconcile(validIDs: validIDs.union(collectionIDs).union(workspace.data.subjects.map(\.id)).union(workspace.data.relationships.map(\.id)))
-        let oldByID: [UUID: FileItem] = Dictionary(old.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        workspace.change { data in
-            data.reconcile(validIDs: validIDs, additionalGraphIDs: collectionIDs)
-            for file in files where file.noteSource == nil && oldByID[file.id]?.modifiedAt != file.modifiedAt {
-                data.extractedText.removeValue(forKey: file.id)
-            }
-        }
     }
     private func changeSection(_ next: Section?) {
         if next != .collections { collectionID = nil }
@@ -358,6 +352,17 @@ struct WorkspaceView: View {
         guard let percent = workspace.activeScan?.percentCompleted else { return "Scan · counting…" }
         return "Scan · \(percent)%"
     }
+    private func handleRuntimeCommand(_ command: RuntimeCommand) {
+        switch command.destination {
+        case .workspace: break
+        case .graph: previewRequest = nil; section = .graph
+        case .search:
+            browseFiles(.all, favorites: false)
+            Task { @MainActor in try? await Task.sleep(for: .milliseconds(150)); searchFocused = true }
+        case .scan:
+            if workspace.scanIsActive || workspace.data.lastScan != nil { workspace.showScanResults() }
+        }
+    }
     private func inspect(_ id: UUID) { navigate(ExplorationHop(id, source: currentSection == .graph ? navigator.history.current?.itemID : nil)) }
     private func itemKind(_ id: UUID) -> ExplorationItemKind {
         if store.library.files.contains(where: { $0.id == id }) { return .file }
@@ -412,7 +417,7 @@ struct WorkspaceView: View {
             FolderBrowser(section: browserSection, query: query, favorites: favoritesOnly, type: typeFilter,
                           minimumBytes: Int64(minimumSizeMB * 1_000_000), recent: recentOnly, sort: sort,
                           listMode: listMode, initialLocation: browserLocation, selectedIDs: selectedIDs,
-                          select: selectFile, remove: requestRemoval, pinnedOnly: currentSection == .collections && pinnedCollectionsOnly)
+                          select: selectFile, remove: requestRemoval, sessionID: browserSection.rawValue + ":route:" + (currentSection == .collections ? collectionRoute.uuidString : fileRoute.uuidString), pinnedOnly: currentSection == .collections && pinnedCollectionsOnly)
                 .id(currentSection.rawValue + (currentSection == .collections ? collectionRoute.uuidString : fileRoute.uuidString))
         }.padding(.horizontal, 24).padding(.vertical, 18)
     }
@@ -456,23 +461,27 @@ struct WorkspaceView: View {
 }
 
 struct FileThumbnail: View {
+    @EnvironmentObject private var runtime: RuntimeController
     let file: FileItem
+    var size = CGSize(width: 240, height: 180)
+    @Environment(\.displayScale) private var displayScale
     @State private var thumbnail: NSImage?
     var body: some View {
         Group {
             if let thumbnail { Image(nsImage: thumbnail).resizable().scaledToFit().padding(8) }
             else { Image(systemName: VaultStyle.fileSymbol(file.type)).font(.system(size: 44, weight: .ultraLight)).foregroundStyle(.secondary) }
-        }.task(id: fingerprint) { await load() }
+        }.task(id: runtime.windowVisible ? fingerprint : nil, priority: .utility) {
+            if runtime.windowVisible { await load() } else { thumbnail = nil }
+        }
     }
-    private var fingerprint: String { "\(file.id)-\(file.size)-\(file.modifiedAt?.timeIntervalSinceReferenceDate ?? 0)" }
+    private var fingerprint: String { "\(file.id)-\(file.size)-\(file.modifiedAt?.timeIntervalSinceReferenceDate ?? 0)-\(size.width)x\(size.height)@\(displayScale)" }
     @MainActor private func load() async {
         thumbnail = nil
         guard !Task.isCancelled else { return }
-        var stale = false
-        guard let url = try? URL(resolvingBookmarkData: file.bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale), !stale else { return }
-        let accessed = url.startAccessingSecurityScopedResource()
-        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-        let request = QLThumbnailGenerator.Request(fileAt: url, size: CGSize(width: 240, height: 180), scale: 2, representationTypes: .thumbnail)
+        guard let resource = try? await PreviewResource.resolve(file), !Task.isCancelled else { return }
+        defer { withExtendedLifetime(resource) {} }
+        let url = resource.url
+        let request = QLThumbnailGenerator.Request(fileAt: url, size: size, scale: max(1, min(3, displayScale)), representationTypes: .thumbnail)
         let image = await ThumbnailPipeline.shared.image(key: fingerprint, request: request)
         if !Task.isCancelled { thumbnail = image }
     }

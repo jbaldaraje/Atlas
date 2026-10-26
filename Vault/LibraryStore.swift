@@ -18,6 +18,7 @@ final class LibraryStore: ObservableObject {
     @Published var progress = 0
     @Published var total = 0
     private var importingExportedNotes = false
+    private var preparationTask: Task<Void, Never>?
     private var importTask: Task<Void, Never>?
     @Published var message: String?
     @Published var loadFailed = false
@@ -42,6 +43,14 @@ final class LibraryStore: ObservableObject {
             library = next; operationFailed = false; return true
         }
         catch { operationFailed = true; message = "Metadata could not be saved. Your previous library remains unchanged."; return false }
+    }
+    @discardableResult func commitEncoded(_ next: Library, bytes: Data, expectedRevision: UUID) -> Bool {
+        guard !loadFailed, expectedRevision == graphRevision else { return false }
+        do {
+            try FileManager.default.createDirectory(at: repository.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try bytes.write(to: repository.url, options: .atomic)
+            graphRevision = UUID(); library = next; operationFailed = false; return true
+        } catch { operationFailed = true; message = "Catalog metadata could not be saved."; return false }
     }
     @discardableResult func update(_ file: FileItem) -> Bool {
         var next = library
@@ -76,8 +85,8 @@ final class LibraryStore: ObservableObject {
         guard !busy, !loadFailed else { return }
         importingExportedNotes = false
         busy = true
-        Task {
-            defer { busy = false }
+        preparationTask = Task {
+            defer { busy = false; preparationTask = nil }
             do { candidates = try await FileAccessService.inspect(urls); presentingImport = true }
             catch { operationFailed = true; message = error.localizedDescription }
         }
@@ -119,30 +128,44 @@ final class LibraryStore: ObservableObject {
             message = (report.cancelled ? "Import cancelled; completed items were retained. " : "") + "Added \(report.items.count) files. Skipped \(report.skipped) existing references. Failed: \(report.failures.count)." + (report.failures.isEmpty ? "" : " Retry by selecting these files again: " + report.failures.joined(separator: ", "))
         }
     }
-    func cancelImport() { importTask?.cancel() }
+    func cancelImport() { importTask?.cancel(); preparationTask?.cancel() }
+    func shutdown() async { cancelImport(); await preparationTask?.value; await importTask?.value }
     func addRestored(_ file: FileItem) -> Bool {
         var next = library
         next.files.removeAll { $0.id == file.id }; next.files.append(file)
         return commit(next)
     }
-    @discardableResult func synchronize(_ entries: [ImportCandidate], folderBookmark: Data, progress: (@Sendable (Int, Int) -> Void)? = nil) async -> CatalogSyncResult {
+    @discardableResult func synchronize(_ entries: [ImportCandidate], folderBookmark: Data, control: ScanControl? = nil, progress: (@Sendable (Int, Int) -> Void)? = nil) async -> CatalogSyncResult {
         guard !busy, !loadFailed else { return CatalogSyncResult(errors: ["Catalog is busy or unavailable."]) }
         busy = true
         defer { busy = false }
-        var stale = false
         do {
-            let folder = try URL(resolvingBookmarkData: folderBookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale)
-            guard !stale else { throw FileAccessService.AccessError.staleBookmark }
-            let access = folder.startAccessingSecurityScopedResource()
-            defer { if access { folder.stopAccessingSecurityScopedResource() } }
-            let report = await FileAccessService.run(entries, copy: false, managedDirectory: managedDirectory, existingPaths: [], progress: progress)
-            var next = library
-            for index in next.files.indices where next.files[index].fileIdentity == nil {
-                next.files[index].fileIdentity = try? FileAccessService.withAccess(next.files[index]) { FileAccessService.identity(at: $0) }
+            let resource = try await PreviewResource.resolve(bookmark: folderBookmark, directory: true)
+            defer { withExtendedLifetime(resource) {} }
+            let snapshot = library.files
+            let known = await Task.detached(priority: .utility) {
+                Dictionary(snapshot.map { ($0.originalLocation, $0) }, uniquingKeysWith: { a, _ in a })
+            }.value
+            let report = await FileAccessService.run(entries, copy: false, managedDirectory: managedDirectory, existingPaths: [], existingByPath: known, control: control, progress: progress)
+            // Merge and encode away from the UI. Retry preparation if a user edits metadata meanwhile.
+            while true {
+                let snapshot = library, expectedRevision = graphRevision
+                let prepared = await Task.detached(priority: .utility) { () -> (Library, CatalogMerge, Data?) in
+                    var next = snapshot; let merge = next.mergeScanned(report.items)
+                    let bytes: Data? = merge.added.isEmpty && merge.updated.isEmpty ? nil : try? JSONEncoder().encode(next)
+                    return (next, merge, bytes)
+                }.value
+                guard expectedRevision == graphRevision else { continue }
+                let merge = prepared.1
+                if !merge.added.isEmpty || !merge.updated.isEmpty {
+                    guard let bytes = prepared.2 else { return CatalogSyncResult(attempted: report.items.count + report.failures.count, errors: ["Catalog metadata could not be encoded."]) }
+                    // The final atomic replacement remains synchronous, preserving existing transaction semantics.
+                    guard commitEncoded(prepared.0, bytes: bytes, expectedRevision: expectedRevision) else {
+                        return CatalogSyncResult(attempted: report.items.count + report.failures.count, errors: ["Catalog metadata could not be saved."])
+                    }
+                }
+                return CatalogSyncResult(merge: merge, attempted: report.items.count + report.failures.count, errors: report.failures.map { "Unavailable file: " + $0 })
             }
-            let merge = next.mergeScanned(report.items)
-            guard commit(next, graphChanged: !merge.added.isEmpty || !merge.updated.isEmpty) else { return CatalogSyncResult(attempted: report.items.count + report.failures.count, errors: ["Catalog metadata could not be saved."]) }
-            return CatalogSyncResult(merge: merge, attempted: report.items.count + report.failures.count, errors: report.failures.map { "Unavailable file: " + $0 })
         } catch { return CatalogSyncResult(errors: [error.localizedDescription]) }
     }
     @discardableResult func applyOrganization(_ facts: [OrganizationFacts], workspace: inout Workspace) -> OrganizationCounts? {
@@ -187,21 +210,28 @@ final class LibraryStore: ObservableObject {
     func open(_ file: FileItem) {
         Task {
             do {
-                let opened = try await FileAccessService.withAsyncAccess(file) { url in
-                    await withCheckedContinuation { continuation in
+                let resource = try await PreviewResource.resolve(file)
+                defer { withExtendedLifetime(resource) {} }
+                let url = resource.url
+                let opened = await withCheckedContinuation { continuation in
                         NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration()) { app, error in
                             continuation.resume(returning: app != nil && error == nil)
                         }
                     }
-                }
+                try Task.checkCancellation()
                 if opened { operationFailed = false; openedEvent = OpenedFileEvent(id: file.id, date: .now) }
                 else { operationFailed = true; message = "The file could not be opened in its default application." }
             } catch { operationFailed = true; message = error.localizedDescription }
         }
     }
     func reveal(_ file: FileItem) {
-        do { try FileAccessService.withAccess(file) { NSWorkspace.shared.activateFileViewerSelecting([$0]) } }
-        catch { operationFailed = true; message = error.localizedDescription }
+        Task {
+            do {
+                let resource = try await PreviewResource.resolve(file)
+                defer { withExtendedLifetime(resource) {} }
+                try Task.checkCancellation(); NSWorkspace.shared.activateFileViewerSelecting([resource.url])
+            } catch { operationFailed = true; message = error.localizedDescription }
+        }
     }
 }
 

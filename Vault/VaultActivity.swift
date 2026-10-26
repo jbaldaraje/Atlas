@@ -7,6 +7,7 @@ struct VaultActivityInput {
     var authenticating = false
     var secureSelected = false
     var secureUnlocked = false
+    var scanPaused = false
     var scanStage: ScanStage?
     var discovered = 0
     var processed = 0
@@ -34,6 +35,7 @@ struct VaultActivity: Equatable {
         if input.hasError { return VaultActivity(kind: .attention, title: "Needs your attention", detail: "An operation reported an issue", progress: nil) }
         if input.authenticating { return VaultActivity(kind: .authenticating, title: "Verifying access", detail: "Waiting for macOS authentication", progress: nil) }
         if let stage = input.scanStage, stage.isRunning {
+            if input.scanPaused { return VaultActivity(kind: .paused, title: "Scan paused", detail: "Completed catalog entries are kept", progress: input.scanProgress) }
             let title: String
             switch stage {
             case .counting: title = "Counting matching files"

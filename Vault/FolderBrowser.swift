@@ -3,6 +3,7 @@ import AppKit
 import VaultCore
 
 struct FolderBrowser: View {
+    @EnvironmentObject private var runtime: RuntimeController
     @EnvironmentObject private var store: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
     @EnvironmentObject private var browsingSession: BrowsingSessionStore
@@ -59,7 +60,8 @@ struct FolderBrowser: View {
         VStack(alignment: .leading, spacing: 12) {
             breadcrumbs
             if let error = model.error { Text(error).font(.caption).foregroundStyle(VaultStyle.amber) }
-            if !current {
+            if !runtime.windowVisible { Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity) }
+            else if !current {
                 VStack(spacing: 10) { ProgressView(); Text("Preparing this level…").font(.caption).foregroundStyle(.secondary) }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if model.page.itemCount == 0 {
@@ -69,7 +71,7 @@ struct FolderBrowser: View {
         }
         .onAppear { if let position = browsingSession.load(sessionKey) { path = position.path; pageNumber = position.page } }
         .onDisappear { browsingSession.save(sessionKey, path: path, page: pageNumber) }
-        .task(id: request) { await load() }
+        .task(id: runtime.windowVisible ? request : nil) { if runtime.windowVisible { await load() } }
         .onChange(of: query) { _, _ in pageNumber = 0 }
         .onChange(of: favorites) { _, _ in pageNumber = 0 }
         .onChange(of: type) { _, _ in pageNumber = 0 }

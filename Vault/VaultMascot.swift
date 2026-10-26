@@ -3,6 +3,7 @@ import SceneKit
 import AppKit
 
 struct VaultMascotPanel: View {
+    @EnvironmentObject private var runtime: RuntimeController
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
     @EnvironmentObject private var secure: SecureStore
@@ -22,6 +23,7 @@ struct VaultMascotPanel: View {
         if case .results = workspace.scanPresentation, workspace.reviewFolder, workspace.data.lastScan?.errors.isEmpty == false { input.hasError = true }
         input.authenticating = secure.authenticating
         input.secureSelected = secureSection; input.secureUnlocked = secure.unlocked
+        input.scanPaused = workspace.scanPaused
         input.scanStage = workspace.scanIsActive ? workspace.activeScan?.stage : nil
         input.discovered = workspace.activeScan?.discovered ?? 0; input.processed = workspace.activeScan?.processed ?? 0
         if workspace.scanIsActive { input.scanProgress = workspace.activeScan?.fractionCompleted }
@@ -32,10 +34,10 @@ struct VaultMascotPanel: View {
         input.catalogFiles = library.library.files.count
         return VaultActivity.resolve(input)
     }
-    private var animating: Bool { visible && cinematicMotion && !reducedMotion && scenePhase == .active && windowState != .inactive }
+    private var animating: Bool { visible && runtime.effectsAllowed && cinematicMotion && !reducedMotion && scenePhase == .active && windowState != .inactive }
     var body: some View {
         VStack(spacing: 6) {
-            if showMascot {
+            if showMascot && runtime.windowVisible {
                 MascotScene(kind: activity.kind, animate: animating)
                     .frame(height: 94).allowsHitTesting(false).accessibilityHidden(true)
             }

@@ -58,6 +58,10 @@ actor KnowledgeGraphEngine {
             contentIndex = nil; contentRevision = nil
         }
     }
+    func releaseTransientCaches() {
+        graphIndex = nil; revision = nil; contentIndex = nil; contentRevision = nil
+        positions.removeAll(); positionsLoaded = false
+    }
     func move(_ id: UUID, to point: SpatialPoint) throws {
         guard point.x.isFinite, point.y.isFinite else { return }
         positions[id] = point

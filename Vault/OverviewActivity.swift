@@ -8,6 +8,7 @@ private struct ActivityRow: Identifiable, Sendable {
 }
 private struct ActivityFilterRequest: Equatable { let group: String?; let kind: FileKindFilter }
 struct OverviewActivity: View {
+    @EnvironmentObject private var runtime: RuntimeController
     @EnvironmentObject private var store: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
     @Environment(\.dismiss) private var dismiss
@@ -46,11 +47,13 @@ struct OverviewActivity: View {
                 Button { group = "Recently added" } label: { Label("Recently added", systemImage: "folder").padding(18).frame(maxWidth: .infinity, alignment: .leading) }
                 Spacer()
             }
-        }.padding(24).frame(width: 730, height: 540).task(id: ActivityFilterRequest(group: group, kind: fileKind)) { await load() }
+        }.padding(24).frame(width: 730, height: 540).task(id: runtime.windowVisible ? ActivityFilterRequest(group: group, kind: fileKind) : nil) {
+            if runtime.windowVisible { await load() } else { rows = [] }
+        }.onChange(of: group) { _, _ in page = 0 }.onChange(of: fileKind) { _, _ in page = 0 }
     }
     private func load() async {
         guard let group else { return }
-        loading = true; rows = []; page = 0; defer { loading = false }
+        loading = true; rows = []; defer { loading = false }
         let files = store.library.files, opened = workspace.data.openedFiles ?? [:], kind = fileKind
         let worker = Task.detached(priority: .userInitiated) { () throws -> [ActivityRow] in
             var rows: [ActivityRow] = []
@@ -65,7 +68,7 @@ struct OverviewActivity: View {
         }
         do {
             let next = try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })
-            try Task.checkCancellation(); rows = next
+            try Task.checkCancellation(); rows = next; page = min(page, max(0, (next.count - 1) / 60))
         } catch {}
     }
 }

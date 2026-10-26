@@ -1,5 +1,6 @@
 import AppKit
 import QuickLookThumbnailing
+import VaultCore
 
 /// Demand-driven thumbnails for visible file cards only. Never used for Secure Vault records.
 @MainActor
@@ -14,33 +15,53 @@ final class ThumbnailPipeline {
     private var pending: [UUID: Entry] = [:]
     private var queue: [UUID] = []
     private var active: [UUID: Entry] = [:]
-    private init() { cache.countLimit = 128; cache.totalCostLimit = 32 * 1024 * 1024 }
+    private var suspended = false
+    private var pressure: DispatchSourceMemoryPressure?
+    private init() {
+        cache.countLimit = 128
+        configure(megabytes: UserDefaults.standard.integer(forKey: "thumbnailCacheMB"))
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        source.setEventHandler { [weak self] in Task { @MainActor in self?.cache.removeAllObjects() } }
+        source.resume(); pressure = source
+    }
+    func configure(megabytes: Int) {
+        cache.totalCostLimit = (ThumbnailBudget(rawValue: megabytes) ?? .standard).bytes
+        cache.removeAllObjects()
+    }
+    func setSuspended(_ value: Bool) {
+        suspended = value
+        if value {
+            for id in Array(pending.keys) + Array(active.keys) { cancel(id) }
+            cache.removeAllObjects()
+        }
+    }
     func image(key: String, request: QLThumbnailGenerator.Request) async -> NSImage? {
-        if Task.isCancelled { return nil }
+        if Task.isCancelled || suspended { return nil }
         if let image = cache.object(forKey: key as NSString) { return image }
         let id = UUID()
         return await withTaskCancellationHandler(operation: {
             await withCheckedContinuation { continuation in
-                guard !Task.isCancelled else { continuation.resume(returning: nil); return }
+                guard !Task.isCancelled, !suspended, pending.count < 128 else { continuation.resume(returning: nil); return }
                 pending[id] = Entry(key: key, request: request, continuation: continuation)
                 queue.append(id); startNext()
             }
         }, onCancel: { Task { @MainActor in self.cancel(id) } })
     }
     private func startNext() {
-        while active.count < 4, !queue.isEmpty {
+        while !suspended, active.count < 4, !queue.isEmpty {
             let id = queue.removeFirst()
             guard let entry = pending.removeValue(forKey: id) else { continue }
             active[id] = entry
             QLThumbnailGenerator.shared.generateBestRepresentation(for: entry.request) { representation, _ in
                 let image = representation?.nsImage
-                Task { @MainActor in self.finish(id, image: image) }
+                let cost = representation.map { $0.cgImage.width * $0.cgImage.height * 4 } ?? 0
+                Task { @MainActor in self.finish(id, image: image, cost: cost) }
             }
         }
     }
-    private func finish(_ id: UUID, image: NSImage?) {
+    private func finish(_ id: UUID, image: NSImage?, cost: Int) {
         guard let entry = active.removeValue(forKey: id) else { return }
-        if let image { cache.setObject(image, forKey: entry.key as NSString, cost: 700_000) }
+        if let image { cache.setObject(image, forKey: entry.key as NSString, cost: cost) }
         entry.continuation.resume(returning: image); startNext()
     }
     private func cancel(_ id: UUID) {

@@ -12,7 +12,7 @@ Previously saved category sets are versioned at read time: old Documents still i
 
 ## Integration with existing architecture
 
-`WorkspaceStore` still owns folder approval, saved location configuration, background polling, and workspace metadata. Its `FolderScanCoordinator` extension sequences discovery → indexing → organization → possible-duplicate review and persists job checkpoints/results in the existing workspace document. Polling reuses the same organization rules for new/changed files.
+`WorkspaceStore` still owns folder approval, saved location configuration, approved-root filesystem event monitoring, and workspace metadata. Its `FolderScanCoordinator` extension sequences discovery → indexing → organization → possible-duplicate review and persists job checkpoints/results in a separate scan journal with legacy workspace fallback. Event-driven reconciliation reuses the same organization rules for new/changed files.
 
 `FileAccessService` still handles approved scopes, regular-file metadata, bookmarks, and indexing. Discovery now reports individual unavailable entries while continuing safe independent work. `LibraryStore.synchronize` still calls its existing index/import routine, then merges by filesystem identity or path. Stable IDs, user descriptions/tags/favorites, and existing references are preserved. Hard links, nested source folders, and known rescanned paths do not create new catalog entries. No copying is performed by scanning; managed-copy import remains a separate existing choice.
 
@@ -49,7 +49,7 @@ New:
 
 Modified:
 - `Library.swift`, `Workspace.swift`, `WorkspaceTests.swift` in VaultCore — optional identity/provenance/job fields, expanded categories, compatibility, merge rules/tests.
-- `FileAccessService.swift`, `LibraryStore.swift`, `WorkspaceStore.swift` — existing discovery/index/persistence/polling integration.
+- `FileAccessService.swift`, `LibraryStore.swift`, `WorkspaceStore.swift` — existing discovery/index/persistence/monitoring integration.
 - `OverviewWorkspace.swift`, `WorkspaceView.swift`, `VaultApp.swift` — two entry points, shared presentation, scan/import scheduling guards.
 - `SecureWorkspace.swift` — only the existing folder/category UI declared in that file; encrypted-record behavior is unchanged.
 - `DetailViews.swift` — organization evidence and review action in the existing inspector.
@@ -72,3 +72,5 @@ The previous 10,000-entry failure has been removed. FolderScanCursor streams dis
 Progress is cumulative across chunks; cancellation retains completed catalog batches, and Retry Scan can resume by safely rescanning known identities. There is no guaranteed maximum capacity or performance claim: the existing catalog/workspace stores still grow with the indexed library and use atomic JSON snapshots. This update removes the arbitrary scan quota and bounds transient discovery/organization buffers; it does not replace persistence with a disk-paged database.
 
 Three additional native regression tests cover 10,003 files (past the former cap) while asserting per-chunk buffering, repeated cursor closure without file deletion, and a complete catalog/organization scan spanning multiple chunks. These tests remain unrun in the Linux environment.
+
+Menu bar/runtime integration replaces the old periodic poller with scoped FSEvents and moves checkpoints into scan-job.json. Source changes are coalesced before bounded root reconciliation; unchanged catalog saves can be skipped. Pause/resume, safe stopped-job retry, notifications and profiling limits are detailed in RuntimePerformance.md. Final catalog/workspace atomic replacements remain synchronous and separate.

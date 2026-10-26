@@ -22,6 +22,7 @@ actor CatalogBrowserEngine {
     private struct Cached { let revision: CatalogRevision; let index: CatalogIndex }
     private var caches: [String: Cached] = [:]
     private(set) var buildCount = 0
+    func releaseTransientCaches() { caches.removeAll(); dashboardRequest = nil; dashboardResult = nil }
     func page(_ request: CatalogRequest, snapshot: CatalogSnapshot) throws -> CatalogPage {
         try Task.checkCancellation()
         if caches[request.dataset]?.revision != request.revision {

@@ -75,7 +75,7 @@ struct MonitoringWorkspace: View {
                 Spacer()
                 Button("Approve Folder…") { workspace.approveFolder() }.disabled(workspace.working || store.busy)
             }
-            Text("Choose which file types to index in each approved folder. Polling runs every 30 seconds while Vault is open. Disconnect keeps existing index entries. Hidden files, packages, and symlinks are skipped.")
+            Text("Choose which file types to index in each approved folder. Vault watches approved folders for changes while it runs, including menu bar mode. Disconnect keeps existing index entries. Hidden files, packages, and symlinks are skipped.")
                 .font(.caption).foregroundStyle(.secondary)
             ForEach(workspace.data.locations) { location in locationRow(location) }
         }

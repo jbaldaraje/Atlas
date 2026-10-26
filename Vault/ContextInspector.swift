@@ -2,6 +2,7 @@ import SwiftUI
 import VaultCore
 
 struct ContextInspector: View {
+    @EnvironmentObject private var runtime: RuntimeController
     @EnvironmentObject private var store: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
     let id: UUID?
@@ -55,7 +56,8 @@ struct ContextInspector: View {
                 ContentUnavailableView("Room for context", systemImage: "sidebar.right", description: Text("Select a file, subject, or collection to inspect it."))
             }
         }.background { ObservatoryBackground(grid: false) }
-        .task(id: request) {
+        .task(id: runtime.windowVisible ? request : nil) {
+                    guard runtime.windowVisible else { return }
             guard id != nil else { context = nil; return }
             loading = true; defer { loading = false }
             do {

@@ -35,10 +35,11 @@ struct SearchablePDFPreview: NSViewRepresentable {
             stop(); self.url = url; requested = term; placeholder?.stringValue = "Loading PDF…"; placeholder?.isHidden = false
             task = Task {
                 let worker = Task.detached(priority: .userInitiated) { () -> LoadedPDF in
+                    guard !Task.isCancelled else { return LoadedPDF(document: nil) }
                     guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 50 * 1024 * 1024 else { return LoadedPDF(document: nil) }
                     return LoadedPDF(document: PDFDocument(url: url))
                 }
-                let loaded = await worker.value
+                let loaded = await withTaskCancellationHandler(operation: { await worker.value }, onCancel: { worker.cancel() })
                 let document = loaded.document
                 guard !Task.isCancelled, self.url == url else { return }
                 document?.delegate = self; view?.document = document

@@ -35,6 +35,7 @@ struct NotesWorkspace: View {
 }
 
 private struct NoteSnapshotReader: View {
+    @EnvironmentObject private var runtime: RuntimeController
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
     @EnvironmentObject private var notes: AppleNotesStore
@@ -43,6 +44,7 @@ private struct NoteSnapshotReader: View {
     @State private var text: String?
     @State private var error: String?
     @State private var preview = false
+    @State private var truncated = false
     private var plainText: Bool { ["txt", "md", "markdown"].contains(file.type.lowercased()) }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -64,19 +66,33 @@ private struct NoteSnapshotReader: View {
                 Text("Use Preview Note to read this exported document with native Quick Look.").foregroundStyle(.secondary)
                 Spacer()
             } else if let text {
+                if truncated { Text("Showing a bounded text excerpt. Open Local Copy to read the entire note.").font(.caption).foregroundStyle(.secondary) }
                 ScrollView { Text(text.isEmpty ? "This note has no plain text." : text).font(.body).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 10) }
             } else if let error { Text(error).foregroundStyle(.secondary); Spacer() }
             else { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
         }.padding(22).frame(minWidth: 230, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .sheet(isPresented: $preview) { FilePreview(file: file) }
-            .task(id: file.noteSource?.importedAt) {
+            .task(id: "\(runtime.windowVisible)-\(file.noteSource?.importedAt.timeIntervalSinceReferenceDate ?? 0)") {
+                guard runtime.windowVisible else { text = nil; return }
                 guard plainText else { return }
                 text = nil; error = nil
                 do {
-                    let loaded = try await Task.detached(priority: .userInitiated) {
-                        try FileAccessService.withAccess(file) { try String(contentsOf: $0, encoding: .utf8) }
-                    }.value
-                    try Task.checkCancellation(); text = loaded
+                    let worker = Task.detached(priority: .userInitiated) {
+                        try FileAccessService.withAccess(file) { url -> (String, Bool) in
+                            let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
+                            let limit = 1024 * 1024
+                            var data = try handle.read(upToCount: limit) ?? Data()
+                            let actualSize = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize
+                            let truncated = actualSize.map { $0 > data.count } ?? (data.count == limit)
+                            for _ in 0..<4 {
+                                if let text = String(data: data, encoding: .utf8) { return (text, truncated) }
+                                if !data.isEmpty { data.removeLast() }
+                            }
+                            throw CocoaError(.fileReadInapplicableStringEncoding)
+                        }
+                    }
+                    let loaded = try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })
+                    try Task.checkCancellation(); text = loaded.0; truncated = loaded.1
                     workspace.recordOpened(file.id)
                 } catch is CancellationError {} catch { self.error = error.localizedDescription }
             }

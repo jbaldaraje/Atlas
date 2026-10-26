@@ -16,9 +16,11 @@ public struct OrganizationFacts: Codable, Equatable, Sendable {
     public var textRequested = false
     public var locationsRequested = false
     public var inputTags: [String] = []
+    public var changeSignature: String? = nil
     public var generatedGroupIDs: Set<UUID>? = nil
     public var generatedSubjectIDs: Set<UUID>? = nil
     public init(file: FileItem, folderContext: String) {
+        changeSignature = file.changeSignature
         fileID = file.id; size = file.size; modifiedAt = file.modifiedAt; filename = file.filename
         category = ScanFileCategory.classify(fileExtension: file.type); self.folderContext = folderContext
     }
@@ -83,6 +85,7 @@ public struct ScanJob: Identifiable, Codable, Equatable, Sendable {
     public var reviewIDs: Set<UUID> = []
     /// Optional so saved jobs from earlier releases still decode.
     public var progress: ScanWorkProgress?
+    public var paused: Bool? = nil
     public init(sources: [ScanLocation]) { self.sources = sources }
     public var fractionCompleted: Double? {
         if stage == .completed { return 1 }

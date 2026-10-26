@@ -46,6 +46,9 @@ final class BrowsingSessionStore: ObservableObject {
     struct Position { let path: [CatalogGroup]; let page: Int }
     private var positions: [String: Position] = [:]
     func load(_ key: String) -> Position? { positions[key] }
-    func save(_ key: String, path: [CatalogGroup], page: Int) { positions[key] = Position(path: path, page: page) }
+    func save(_ key: String, path: [CatalogGroup], page: Int) {
+        if positions.count >= 32, positions[key] == nil, let old = positions.keys.first { positions.removeValue(forKey: old) }
+        positions[key] = Position(path: path, page: page)
+    }
     func reset(section: CatalogSection) { positions = positions.filter { !$0.key.hasPrefix(section.rawValue + ":") } }
 }

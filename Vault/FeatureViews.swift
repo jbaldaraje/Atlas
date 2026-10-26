@@ -23,6 +23,7 @@ private struct StorageFilterRequest: Equatable { let reportID: UUID?; let kind: 
 private struct RecoveryFilterRequest: Equatable { let trash: UUID; let retained: UUID; let kind: FileKindFilter }
 
 struct StorageWorkspace: View {
+    @EnvironmentObject private var runtime: RuntimeController
     @EnvironmentObject private var trash: NativeTrashService
     @EnvironmentObject private var store: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
@@ -50,9 +51,11 @@ struct StorageWorkspace: View {
                 else { ProgressView("Preparing storage groups…").frame(maxWidth: .infinity, maxHeight: .infinity) }
             }
         }
-        .task(id: StorageFilterRequest(reportID: workspace.report?.id, kind: fileKind)) {
+        .task(id: runtime.windowVisible ? StorageFilterRequest(reportID: workspace.report?.id, kind: fileKind) : nil) {
+            guard runtime.windowVisible else { return }
             guard let report = workspace.report else { prepared = nil; return }
             let kind = fileKind
+            if prepared?.id == report.id, prepared?.kind == kind { return }
             let worker = Task.detached(priority: .userInitiated) { try StoragePresentation(report, kind: kind) }
             do {
                 let next = try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })
@@ -109,6 +112,7 @@ struct StorageWorkspace: View {
 }
 
 struct RecoveryWorkspace: View {
+    @EnvironmentObject private var runtime: RuntimeController
     @EnvironmentObject private var trash: NativeTrashService
     @EnvironmentObject private var store: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
@@ -162,7 +166,7 @@ struct RecoveryWorkspace: View {
             }
 
         }.task { workspace.refreshRecovery(); trash.refresh() }
-            .task(id: request) { await filterRecords() }
+            .task(id: runtime.windowVisible ? request : nil) { if runtime.windowVisible { await filterRecords() } }
             .onChange(of: filteredTrash.count) { _, count in if recoveryFolder == 0 { recoveryPage = min(recoveryPage, max(0, (count - 1) / 60)) } }
             .onChange(of: filteredRecovery.count) { _, count in if recoveryFolder == 1 { recoveryPage = min(recoveryPage, max(0, (count - 1) / 60)) } }
             .confirmationDialog("Permanently delete retained copy?", isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }), titleVisibility: .visible) {

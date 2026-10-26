@@ -1,7 +1,7 @@
 import Foundation
 import PDFKit
 import Vision
-import AppKit
+import ImageIO
 import VaultCore
 
 actor ContentService {
@@ -9,7 +9,7 @@ actor ContentService {
     func extract(_ file: FileItem, ocr: Bool) throws -> String {
         try Task.checkCancellation()
         return try FileAccessService.withAccess(file) { url in
-            guard file.size <= 50 * 1024 * 1024 else { throw ContentError.tooLarge }
+            guard let actualSize = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize, actualSize <= 50 * 1024 * 1024 else { throw ContentError.tooLarge }
             if file.type.lowercased() == "pdf", let pdf = PDFDocument(url: url) {
                 var text = ""
                 for i in 0..<min(pdf.pageCount, 300) {
@@ -20,9 +20,17 @@ actor ContentService {
                 return String(text.prefix(200_000))
             }
             if ["txt", "md", "csv", "json"].contains(file.type.lowercased()) {
-                return String(try String(contentsOf: url, encoding: .utf8).prefix(200_000))
+                let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
+                var data = try handle.read(upToCount: 1024 * 1024) ?? Data()
+                // Trim at most one partial UTF-8 scalar at the bounded read boundary.
+                for _ in 0..<4 {
+                    if let text = String(data: data, encoding: .utf8) { return String(text.prefix(200_000)) }
+                    if !data.isEmpty { data.removeLast() }
+                }
+                throw ContentError.unsupported
             }
-            if ocr, let image = NSImage(contentsOf: url), let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            if ocr, let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+               let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 4096, kCGImageSourceShouldCacheImmediately: false] as CFDictionary) {
                 let request = VNRecognizeTextRequest()
                 request.recognitionLevel = .accurate
                 try VNImageRequestHandler(cgImage: cg).perform([request])

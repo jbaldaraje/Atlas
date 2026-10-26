@@ -2,6 +2,7 @@ import SwiftUI
 import VaultCore
 
 struct DashboardWidgets: View {
+    @EnvironmentObject private var runtime: RuntimeController
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var workspace: WorkspaceStore
     @EnvironmentObject private var preferences: WorkspacePreferencesStore
@@ -29,7 +30,7 @@ struct DashboardWidgets: View {
                 Button("Customize Dashboard") { customizing = true }
             }
             if visible.isEmpty { Text("Choose the widgets you want with Customize Dashboard.").font(.callout).foregroundStyle(.secondary).padding(.vertical, 12) }
-            if let result = model.result {
+            if runtime.windowVisible, let result = model.result {
                 WidgetGridLayout {
                     ForEach(visible) { config in
                         DashboardWidgetCard(config: config, result: result, openMap: openMap, showActivity: { activity = true })
@@ -50,7 +51,10 @@ struct DashboardWidgets: View {
                 }
             }
         }
-        .task(id: request) { await model.load(request, library: library, workspace: workspace, preferences: preferences) }
+        .task(id: runtime.windowVisible ? request : nil) {
+            if runtime.windowVisible { await model.load(request, library: library, workspace: workspace, preferences: preferences) }
+            else { model.releaseTransientContent() }
+        }
         .sheet(isPresented: $customizing) { DashboardCustomization() }
         .sheet(isPresented: $activity) { OverviewActivity(select: select) }
     }
@@ -100,7 +104,7 @@ private struct DashboardWidgetCard: View {
     }
     private func fileRow(_ row: DashboardFile) -> some View {
         HStack(alignment: .top, spacing: 10) {
-            if config.kind == .media { FileThumbnail(file: row.file).frame(width: 66, height: 52).quietPanel() }
+            if config.kind == .media { FileThumbnail(file: row.file, size: CGSize(width: 80, height: 64)).frame(width: 66, height: 52).quietPanel() }
             else { Image(systemName: config.kind == .notes ? "note.text" : VaultStyle.fileSymbol(row.file.type)).foregroundStyle(VaultStyle.lavender).frame(width: 20).padding(.top, 3) }
             VStack(alignment: .leading, spacing: 5) {
                 Button { open(row) } label: {
@@ -123,7 +127,7 @@ private struct DashboardWidgetCard: View {
     }
     private func photo(_ row: DashboardFile) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Button { open(row) } label: { FileThumbnail(file: row.file).frame(height: config.size == .expanded ? 112 : 82).frame(maxWidth: .infinity).quietPanel() }.buttonStyle(.plain)
+            Button { open(row) } label: { FileThumbnail(file: row.file, size: CGSize(width: 180, height: 120)).frame(height: config.size == .expanded ? 112 : 82).frame(maxWidth: .infinity).quietPanel() }.buttonStyle(.plain)
             Text(row.file.filename).font(.caption2).lineLimit(1)
             if let metadata = row.photoMetadata { Text(metadata).font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(2) }
             else { Text("Indexed " + row.file.indexedAt.formatted(date: .abbreviated, time: .omitted)).font(.system(size: 9)).foregroundStyle(.secondary) }
